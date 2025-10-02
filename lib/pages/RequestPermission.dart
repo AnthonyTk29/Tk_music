@@ -4,8 +4,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-import '../main.dart';
+import 'package:tk_music/pages/music_player_android_screen.dart';
 
 class RequestPermissionScreen extends StatelessWidget {
   const RequestPermissionScreen({super.key});
@@ -41,7 +40,7 @@ class RequestPermissionScreen extends StatelessWidget {
         if (context.mounted) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (_) => const MusicScreen()),
+            MaterialPageRoute(builder: (_) => MusicPlayerAndroidScreen()),
           );
         }
       } else {

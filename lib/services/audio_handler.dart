@@ -10,19 +10,17 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   Future<void> _init() async {
+    // Configurar sesión de audio
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
 
+    // Stream de eventos de reproducción
     _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
   }
 
   PlaybackState _transformEvent(PlaybackEvent event) {
     return PlaybackState(
-      controls: [
-        MediaControl.pause,
-        MediaControl.play,
-        MediaControl.stop,
-      ],
+      controls: [MediaControl.play, MediaControl.pause, MediaControl.stop],
       playing: _player.playing,
       processingState: {
         ProcessingState.idle: AudioProcessingState.idle,
