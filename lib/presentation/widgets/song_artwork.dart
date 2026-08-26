@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:on_audio_query_forked/on_audio_query.dart';
 
-/// Carátula de una canción de MediaStore, con un marcador de posición
-/// cuando el archivo no tiene imagen embebida.
 class SongArtwork extends StatelessWidget {
   const SongArtwork({
     super.key,
     required this.songId,
-    this.size = 56,
-    this.borderRadius = 8,
+    this.size = 48,
+    this.borderRadius = 24,
   });
 
   final int songId;
@@ -17,23 +15,18 @@ class SongArtwork extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final radius = BorderRadius.circular(borderRadius);
     return QueryArtworkWidget(
       id: songId,
       type: ArtworkType.AUDIO,
-      artworkWidth: size,
+      artworkBorder: BorderRadius.circular(borderRadius),
       artworkHeight: size,
-      artworkBorder: radius,
-      artworkFit: BoxFit.cover,
-      quality: 100,
-      size: size > 200 ? 512 : 200,
-      keepOldArtwork: true,
+      artworkWidth: size,
       nullArtworkWidget: Container(
-        width: size,
         height: size,
+        width: size,
         decoration: BoxDecoration(
-          borderRadius: radius,
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(borderRadius),
         ),
         child: Icon(
           Icons.music_note,

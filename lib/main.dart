@@ -1,17 +1,19 @@
-import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:device_info_plus/device_info_plus.dart';
-import 'package:tk_music/pages/request_permission.dart';
-import 'dart:io';
-import 'package:tk_music/pages/music_player_android_screen.dart';
 import 'package:audio_service/audio_service.dart';
-import 'package:tk_music/services/audio_handler.dart';
+import 'package:flutter/material.dart';
 
-late final AudioHandler audioHandler;
+import 'package:tk_music/core/di/service_locator.dart';
+import 'package:tk_music/core/theme/app_theme.dart';
+import 'package:tk_music/services/audio_handler.dart';
+import 'package:tk_music/presentation/providers/permission_provider.dart';
+import 'package:tk_music/presentation/providers/song_provider.dart';
+import 'package:tk_music/presentation/pages/music_player_screen.dart';
+import 'package:tk_music/presentation/pages/request_permission_screen.dart';
+import 'package:tk_music/presentation/widgets/app_providers.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  audioHandler = await AudioService.init(
+
+  final audioHandler = await AudioService.init(
     builder: () => MyAudioHandler(),
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.example.tk_music.channel.audio',
@@ -19,81 +21,58 @@ void main() async {
       androidNotificationOngoing: true,
     ),
   );
-  runApp(const MyApp());
+
+  initServiceLocator(audioHandler);
+
+  final permissionProvider = PermissionProvider();
+  final songProvider = SongProvider();
+
+  runApp(MyApp(
+    permissionProvider: permissionProvider,
+    songProvider: songProvider,
+  ));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({
+    super.key,
+    required this.permissionProvider,
+    required this.songProvider,
+  });
+
+  final PermissionProvider permissionProvider;
+  final SongProvider songProvider;
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF182848)),
+    return AppProviders(
+      permissionProvider: permissionProvider,
+      songProvider: songProvider,
+      child: MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
+        home: const _AppShell(),
       ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF182848),
-          brightness: Brightness.dark,
-        ),
-      ),
-      home: const PermissionChecker(),
     );
   }
 }
 
-// Widget que verifica permisos y decide qué pantalla mostrar
-class PermissionChecker extends StatefulWidget {
-  const PermissionChecker({super.key});
-
-  @override
-  State<PermissionChecker> createState() => _PermissionCheckerState();
-}
-
-class _PermissionCheckerState extends State<PermissionChecker> {
-  bool? hasPermission;
-
-  @override
-  void initState() {
-    super.initState();
-    _checkPermissions();
-  }
-
-  Future<void> _checkPermissions() async {
-    bool granted = false;
-
-    if (Platform.isAndroid) {
-      final androidVersion = await DeviceInfoPlugin().androidInfo;
-      if (androidVersion.version.sdkInt >= 33) {
-        // Android 13+
-        granted = await Permission.audio.request().isGranted;
-        await Permission.notification.request();
-      } else {
-        // Android < 13
-        granted = await Permission.storage.request().isGranted;
-      }
-    } else {
-      granted = true;
-    }
-
-    if (mounted) {
-      setState(() {
-        hasPermission = granted;
-      });
-    }
-  }
+class _AppShell extends StatelessWidget {
+  const _AppShell();
 
   @override
   Widget build(BuildContext context) {
-    if (hasPermission == null) {
+    final granted = AppProviders.permissionOf(context).granted;
+
+    if (granted == null) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       );
-    } else if (hasPermission == true) {
-      return const MusicPlayerScreen();
-    } else {
-      return const RequestPermissionScreen();
     }
+
+    return granted
+        ? const MusicPlayerScreen()
+        : const RequestPermissionScreen();
   }
 }

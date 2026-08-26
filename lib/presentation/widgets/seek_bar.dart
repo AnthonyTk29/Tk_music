@@ -1,15 +1,7 @@
 import 'package:flutter/material.dart';
 
-String formatDuration(Duration d) {
-  final hours = d.inHours;
-  final minutes = d.inMinutes.remainder(60);
-  final seconds = d.inSeconds.remainder(60);
-  final mm = minutes.toString().padLeft(2, '0');
-  final ss = seconds.toString().padLeft(2, '0');
-  return hours > 0 ? '$hours:$mm:$ss' : '$mm:$ss';
-}
+import 'package:tk_music/core/utils/formatters.dart';
 
-/// Slider de progreso que no salta mientras el usuario arrastra.
 class SeekBar extends StatefulWidget {
   const SeekBar({
     super.key,
@@ -27,7 +19,6 @@ class SeekBar extends StatefulWidget {
 }
 
 class _SeekBarState extends State<SeekBar> {
-  // Mientras se arrastra, el slider ignora la posición del reproductor.
   double? _dragValue;
 
   @override

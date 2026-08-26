@@ -1,14 +1,17 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
-import 'package:tk_music/main.dart' show audioHandler;
-import 'package:tk_music/widgets/seek_bar.dart';
-import 'package:tk_music/widgets/song_artwork.dart';
+
+import 'package:tk_music/core/di/service_locator.dart';
+import 'package:tk_music/presentation/widgets/seek_bar.dart';
+import 'package:tk_music/presentation/widgets/song_artwork.dart';
 
 class NowPlayingScreen extends StatelessWidget {
   const NowPlayingScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final audioHandler = sl<AudioHandler>();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Reproduciendo'),
@@ -46,7 +49,8 @@ class NowPlayingScreen extends StatelessWidget {
                   Text(
                     item.artist ?? 'Desconocido',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          color:
+                              Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                     textAlign: TextAlign.center,
                     maxLines: 1,
@@ -64,7 +68,7 @@ class NowPlayingScreen extends StatelessWidget {
                   const SizedBox(height: 8),
                   StreamBuilder<PlaybackState>(
                     stream: audioHandler.playbackState,
-                   builder: (context, stateSnapshot) {
+                    builder: (context, stateSnapshot) {
                       final playing = stateSnapshot.data?.playing ?? false;
                       final repeat = stateSnapshot.data?.repeatMode ??
                           AudioServiceRepeatMode.none;
@@ -83,6 +87,7 @@ class NowPlayingScreen extends StatelessWidget {
                                     ? Theme.of(context).colorScheme.primary
                                     : null),
                           ),
+                          const SizedBox(width: 16),
                           IconButton(
                             iconSize: 44,
                             onPressed: audioHandler.skipToPrevious,
@@ -91,9 +96,11 @@ class NowPlayingScreen extends StatelessWidget {
                           const SizedBox(width: 16),
                           IconButton.filled(
                             iconSize: 44,
-                            onPressed:
-                                playing ? audioHandler.pause : audioHandler.play,
-                            icon: Icon(playing ? Icons.pause : Icons.play_arrow),
+                            onPressed: playing
+                                ? audioHandler.pause
+                                : audioHandler.play,
+                            icon:
+                                Icon(playing ? Icons.pause : Icons.play_arrow),
                           ),
                           const SizedBox(width: 16),
                           IconButton(

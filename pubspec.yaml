@@ -45,6 +45,7 @@ dependencies:
   on_audio_query_android_v1_8: ^1.1.1
   permission_handler: ^12.0.0
   shared_preferences: ^2.5.3
+  get_it: ^8.0.3
   # Cachea las carátulas en disco para poder pasarlas a la notificación.
   path_provider: ^2.1.5
 

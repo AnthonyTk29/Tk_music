@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tk_music/widgets/seek_bar.dart';
+import 'package:tk_music/core/utils/formatters.dart';
 
 void main() {
   test('formats short durations as minutes and seconds', () {

@@ -1,15 +1,17 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
-import 'package:tk_music/main.dart' show audioHandler;
-import 'package:tk_music/pages/now_playing_screen.dart';
-import 'package:tk_music/widgets/song_artwork.dart';
 
-/// Barra inferior persistente. Se oculta cuando no hay nada cargado.
+import 'package:tk_music/core/di/service_locator.dart';
+import 'package:tk_music/presentation/pages/now_playing_screen.dart';
+import 'package:tk_music/presentation/widgets/song_artwork.dart';
+
 class MiniPlayer extends StatelessWidget {
   const MiniPlayer({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final audioHandler = sl<AudioHandler>();
+
     return StreamBuilder<MediaItem?>(
       stream: audioHandler.mediaItem,
       builder: (context, snapshot) {
@@ -36,7 +38,8 @@ class MiniPlayer extends StatelessWidget {
                     return LinearProgressIndicator(
                       value: total > 0 ? (pos / total).clamp(0.0, 1.0) : 0,
                       minHeight: 2,
-                      backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                      backgroundColor:
+                          theme.colorScheme.surfaceContainerHighest,
                     );
                   },
                 ),
@@ -46,7 +49,8 @@ class MiniPlayer extends StatelessWidget {
                   child: Row(
                     children: [
                       if (songId != null)
-                        SongArtwork(songId: songId, size: 44, borderRadius: 6),
+                        SongArtwork(
+                            songId: songId, size: 44, borderRadius: 6),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
@@ -81,8 +85,9 @@ class MiniPlayer extends StatelessWidget {
                                 onPressed: playing
                                     ? audioHandler.pause
                                     : audioHandler.play,
-                                icon: Icon(
-                                    playing ? Icons.pause : Icons.play_arrow),
+                                icon: Icon(playing
+                                    ? Icons.pause
+                                    : Icons.play_arrow),
                               ),
                               IconButton(
                                 onPressed: audioHandler.skipToNext,
