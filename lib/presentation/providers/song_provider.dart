@@ -48,7 +48,7 @@ class SongProvider extends ChangeNotifier {
     _loading = false;
     notifyListeners();
 
-    if (_songs.isNotEmpty) {
+    if (_songs.isNotEmpty && isAudioAvailable) {
       final items = _songs.map(SongMapper.toMediaItem).toList();
       await (sl<AudioHandler>() as MyAudioHandler).setQueue(items);
     }

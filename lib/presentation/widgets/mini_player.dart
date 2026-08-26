@@ -10,6 +10,8 @@ class MiniPlayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!isAudioAvailable) return const SizedBox.shrink();
+
     final audioHandler = sl<AudioHandler>();
 
     return StreamBuilder<MediaItem?>(

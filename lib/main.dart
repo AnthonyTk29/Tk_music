@@ -13,14 +13,19 @@ import 'package:tk_music/presentation/widgets/app_providers.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  final audioHandler = await AudioService.init(
-    builder: () => MyAudioHandler(),
-    config: const AudioServiceConfig(
-      androidNotificationChannelId: 'com.example.tk_music.channel.audio',
-      androidNotificationChannelName: 'Audio playback',
-      androidNotificationOngoing: true,
-    ),
-  );
+  AudioHandler? audioHandler;
+  try {
+    audioHandler = await AudioService.init(
+      builder: () => MyAudioHandler(),
+      config: const AudioServiceConfig(
+        androidNotificationChannelId: 'com.example.tk_music.channel.audio',
+        androidNotificationChannelName: 'Audio playback',
+        androidNotificationOngoing: true,
+      ),
+    ).timeout(const Duration(seconds: 10));
+  } catch (e) {
+    debugPrint('AudioService init failed: $e');
+  }
 
   initServiceLocator(audioHandler);
 
@@ -58,11 +63,58 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class _AppShell extends StatelessWidget {
+class _AppShell extends StatefulWidget {
   const _AppShell();
 
   @override
+  State<_AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<_AppShell> {
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _check();
+  }
+
+  Future<void> _check() async {
+    try {
+      final permission = AppProviders.permissionOf(context);
+      await permission.checkPermission();
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (_error != null) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, size: 48, color: Colors.red),
+              const SizedBox(height: 12),
+              Text('Error al inicializar', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(_error!, textAlign: TextAlign.center),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () => setState(() { _error = null; _check(); }),
+                child: const Text('Reintentar'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final granted = AppProviders.permissionOf(context).granted;
 
     if (granted == null) {

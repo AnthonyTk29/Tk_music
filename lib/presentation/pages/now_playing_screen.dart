@@ -10,6 +10,13 @@ class NowPlayingScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!isAudioAvailable) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Reproduciendo')),
+        body: const Center(child: Text('Audio no disponible')),
+      );
+    }
+
     final audioHandler = sl<AudioHandler>();
 
     return Scaffold(

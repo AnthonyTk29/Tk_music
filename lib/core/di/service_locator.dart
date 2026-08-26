@@ -9,10 +9,14 @@ import 'package:tk_music/domain/usecases/request_permission.dart';
 
 final sl = GetIt.instance;
 
-Future<void> initServiceLocator(AudioHandler handler) async {
+void initServiceLocator(AudioHandler? handler) {
   sl.registerLazySingleton(SongLocalDatasource.new);
   sl.registerLazySingleton<SongRepository>(() => SongRepositoryImpl());
   sl.registerLazySingleton(() => GetSongs(sl()));
   sl.registerLazySingleton(() => RequestPermission(sl()));
-  sl.registerLazySingleton<AudioHandler>(() => handler);
+  if (handler != null) {
+    sl.registerLazySingleton<AudioHandler>(() => handler);
+  }
 }
+
+bool get isAudioAvailable => sl.isRegistered<AudioHandler>();

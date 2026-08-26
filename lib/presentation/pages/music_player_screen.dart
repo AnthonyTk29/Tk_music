@@ -15,23 +15,24 @@ class MusicPlayerScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Reproductor Android'),
         actions: [
-          StreamBuilder<PlaybackState>(
-            stream: sl<AudioHandler>().playbackState,
-            builder: (context, snapshot) {
-              final shuffle = snapshot.data?.shuffleMode ==
-                  AudioServiceShuffleMode.all;
-              return IconButton(
-                tooltip: 'Shuffle',
-                onPressed: () => sl<AudioHandler>().setShuffleMode(shuffle
-                    ? AudioServiceShuffleMode.none
-                    : AudioServiceShuffleMode.all),
-                icon: Icon(Icons.shuffle,
-                    color: shuffle
-                        ? Theme.of(context).colorScheme.primary
-                        : null),
-              );
-            },
-          ),
+          if (isAudioAvailable)
+            StreamBuilder<PlaybackState>(
+              stream: sl<AudioHandler>().playbackState,
+              builder: (context, snapshot) {
+                final shuffle = snapshot.data?.shuffleMode ==
+                    AudioServiceShuffleMode.all;
+                return IconButton(
+                  tooltip: 'Shuffle',
+                  onPressed: () => sl<AudioHandler>().setShuffleMode(shuffle
+                      ? AudioServiceShuffleMode.none
+                      : AudioServiceShuffleMode.all),
+                  icon: Icon(Icons.shuffle,
+                      color: shuffle
+                          ? Theme.of(context).colorScheme.primary
+                          : null),
+                );
+              },
+            ),
         ],
       ),
       body: Column(
@@ -67,7 +68,6 @@ class _SongList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = AppProviders.songOf(context);
-    final audioHandler = sl<AudioHandler>();
 
     if (provider.loading) {
       return const Center(child: CircularProgressIndicator());
@@ -95,30 +95,41 @@ class _SongList extends StatelessWidget {
       return const Center(child: Text('No se encontraron canciones'));
     }
 
+    if (!isAudioAvailable) {
+      return _buildSongList(context, provider, null);
+    }
+
     return StreamBuilder<MediaItem?>(
-      stream: audioHandler.mediaItem,
+      stream: sl<AudioHandler>().mediaItem,
       builder: (context, snapshot) {
-        final currentId = snapshot.data?.id;
-        final visibleSongs = provider.visibleSongs;
+        return _buildSongList(context, provider, snapshot.data?.id);
+      },
+    );
+  }
 
-        if (visibleSongs.isEmpty) {
-          return const Center(child: Text('Sin resultados'));
-        }
+  Widget _buildSongList(
+      BuildContext context, dynamic provider, String? currentId) {
+    final visibleSongs = provider.visibleSongs;
 
-        return ListView.builder(
-          itemCount: visibleSongs.length,
-          itemBuilder: (context, index) {
-            final song = visibleSongs[index];
-            return SongTile(
-              song: song,
-              isCurrent: song.filePath == currentId,
-              onTap: () async {
-                final globalIndex = provider.songs.indexOf(song);
-                await audioHandler.skipToQueueItem(globalIndex);
-                await audioHandler.play();
-              },
-            );
-          },
+    if (visibleSongs.isEmpty) {
+      return const Center(child: Text('Sin resultados'));
+    }
+
+    return ListView.builder(
+      itemCount: visibleSongs.length,
+      itemBuilder: (context, index) {
+        final song = visibleSongs[index];
+        return SongTile(
+          song: song,
+          isCurrent: song.filePath == currentId,
+          onTap: isAudioAvailable
+              ? () async {
+                  final audioHandler = sl<AudioHandler>();
+                  final globalIndex = provider.songs.indexOf(song);
+                  await audioHandler.skipToQueueItem(globalIndex);
+                  await audioHandler.play();
+                }
+              : null,
         );
       },
     );
