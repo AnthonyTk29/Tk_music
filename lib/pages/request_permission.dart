@@ -1,26 +1,21 @@
-import 'dart:io';
-
-import 'package:flutter/cupertino.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tk_music/pages/music_player_android_screen.dart';
 
 class RequestPermissionScreen extends StatelessWidget {
   const RequestPermissionScreen({super.key});
 
-  void _requestPermission(BuildContext context) async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    prefs.setBool('wasPermissionAsked', true);
-
+  Future<void> _requestPermission(BuildContext context) async {
     try {
       PermissionStatus status;
 
       // Detectar versión de Android
-      final version = int.tryParse(Platform.version.split(".").first) ?? 0;
+      final version = (await DeviceInfoPlugin().androidInfo).version.sdkInt;
 
       if (version >= 13) {
         status = await Permission.audio.request();
+        await Permission.notification.request();
 
         // Si no está concedido, no lances otro request de inmediato.
         if (!status.isGranted) {
@@ -40,7 +35,7 @@ class RequestPermissionScreen extends StatelessWidget {
         if (context.mounted) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (_) => MusicPlayerAndroidScreen()),
+            MaterialPageRoute(builder: (_) => const MusicPlayerScreen()),
           );
         }
       } else {
