@@ -1,8 +1,12 @@
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:tk_music/core/di/service_locator.dart';
+import 'package:tk_music/core/errors/failures.dart';
+import 'package:tk_music/data/models/song_mapper.dart';
 import 'package:tk_music/domain/entities/song.dart';
 import 'package:tk_music/domain/usecases/get_songs.dart';
+import 'package:tk_music/services/audio_handler.dart';
 
 class SongProvider extends ChangeNotifier {
   SongProvider() {
@@ -12,10 +16,12 @@ class SongProvider extends ChangeNotifier {
   List<Song> _songs = [];
   bool _loading = true;
   String _search = '';
+  Failure? _failure;
 
   List<Song> get songs => _songs;
   bool get loading => _loading;
   String get search => _search;
+  Failure? get failure => _failure;
 
   List<Song> get visibleSongs {
     if (_search.isEmpty) return _songs;
@@ -33,11 +39,18 @@ class SongProvider extends ChangeNotifier {
 
   Future<void> loadSongs() async {
     _loading = true;
+    _failure = null;
     notifyListeners();
 
     final (songs, failure) = await sl<GetSongs>()();
     _songs = songs ?? [];
+    _failure = failure;
     _loading = false;
     notifyListeners();
+
+    if (_songs.isNotEmpty) {
+      final items = _songs.map(SongMapper.toMediaItem).toList();
+      await (sl<AudioHandler>() as MyAudioHandler).setQueue(items);
+    }
   }
 }

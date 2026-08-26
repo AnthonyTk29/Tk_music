@@ -12,7 +12,7 @@ class SongRepositoryImpl implements SongRepository {
   @override
   Future<List<Song>> getSongs() async {
     final models = await _datasource.fetchSongs();
-    return models.asMap().entries.map((e) => SongMapper.fromMediaStore(e.value, e.key)).toList();
+    return models.map(SongMapper.fromMediaStore).toList();
   }
 
   @override

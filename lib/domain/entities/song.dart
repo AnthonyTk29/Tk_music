@@ -3,7 +3,6 @@ import 'package:flutter/foundation.dart';
 @immutable
 class Song {
   const Song({
-    required this.id,
     required this.mediaStoreId,
     required this.title,
     required this.filePath,
@@ -12,7 +11,6 @@ class Song {
     this.duration,
   });
 
-  final int id;
   final int mediaStoreId;
   final String title;
   final String filePath;
@@ -22,8 +20,9 @@ class Song {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) || other is Song && id == other.id;
+      identical(this, other) ||
+      other is Song && mediaStoreId == other.mediaStoreId;
 
   @override
-  int get hashCode => id.hashCode;
+  int get hashCode => mediaStoreId.hashCode;
 }

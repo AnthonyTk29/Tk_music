@@ -81,7 +81,6 @@ class MultiNotifier extends ChangeNotifier {
   void dispose() {
     for (final n in _notifiers) {
       n.removeListener(notifyListeners);
-      n.dispose();
     }
     super.dispose();
   }

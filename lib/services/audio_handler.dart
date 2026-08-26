@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
@@ -8,24 +10,32 @@ import 'artwork_cache.dart';
 class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   final _player = AudioPlayer();
   final _artwork = ArtworkCache();
+  final List<StreamSubscription<dynamic>> _subscriptions = [];
 
   MyAudioHandler() {
     _init();
   }
 
   Future<void> _init() async {
-    // Configurar sesión de audio
     final session = await AudioSession.instance;
     await session.configure(const AudioSessionConfiguration.music());
 
-    session.interruptionEventStream.listen((event) {
-      if (event.begin) {
-        pause();
-      }
-    });
-    session.becomingNoisyEventStream.listen((_) => pause());
-    _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
-    _player.currentIndexStream.listen(_onIndexChanged);
+    _subscriptions.add(
+      session.interruptionEventStream.listen((event) {
+        if (event.begin) pause();
+      }),
+    );
+    _subscriptions.add(
+      session.becomingNoisyEventStream.listen((_) => pause()),
+    );
+    _subscriptions.add(
+      _player.playbackEventStream.listen((event) {
+        playbackState.add(_transformEvent(event));
+      }),
+    );
+    _subscriptions.add(
+      _player.currentIndexStream.listen(_onIndexChanged),
+    );
   }
 
   void _onIndexChanged(int? index) {
@@ -99,7 +109,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> stop() async {
+    await _savePosition();
     await _player.stop();
+    mediaItem.add(null);
     await super.stop();
   }
 
@@ -166,5 +178,10 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   /// Libera el reproductor. Sólo debe llamarse al terminar el servicio.
-  Future<void> dispose() => _player.dispose();
+  Future<void> dispose() async {
+    for (final sub in _subscriptions) {
+      await sub.cancel();
+    }
+    await _player.dispose();
+  }
 }

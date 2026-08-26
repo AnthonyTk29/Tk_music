@@ -73,6 +73,24 @@ class _SongList extends StatelessWidget {
       return const Center(child: CircularProgressIndicator());
     }
 
+    if (provider.failure != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 48),
+            const SizedBox(height: 12),
+            Text(provider.failure!.message),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: provider.loadSongs,
+              child: const Text('Reintentar'),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (provider.songs.isEmpty) {
       return const Center(child: Text('No se encontraron canciones'));
     }
@@ -82,6 +100,10 @@ class _SongList extends StatelessWidget {
       builder: (context, snapshot) {
         final currentId = snapshot.data?.id;
         final visibleSongs = provider.visibleSongs;
+
+        if (visibleSongs.isEmpty) {
+          return const Center(child: Text('Sin resultados'));
+        }
 
         return ListView.builder(
           itemCount: visibleSongs.length,
