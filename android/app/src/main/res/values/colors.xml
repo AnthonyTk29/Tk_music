@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debe coincidir con AppTheme._background en lib/core/theme/app_theme.dart -->
+<resources>
+    <color name="splash_background">#070B14</color>
+    <!-- Fondo del icono adaptativo (Android 8+). Debe coincidir con
+         AppTheme._accent en lib/core/theme/app_theme.dart -->
+    <color name="ic_launcher_background">#2F7FFF</color>
+</resources>

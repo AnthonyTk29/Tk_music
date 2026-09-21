@@ -16,6 +16,12 @@ class SongRepositoryImpl implements SongRepository {
   }
 
   @override
+  Future<List<Song>> getWhatsAppAudios() async {
+    final models = await _datasource.fetchWhatsAppAudios();
+    return models.map(SongMapper.fromMediaStore).toList();
+  }
+
+  @override
   Future<bool> requestPermission() => _datasource.requestPermission();
 
   @override

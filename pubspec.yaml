@@ -39,14 +39,22 @@ dependencies:
   audio_session: ^0.2.4
   device_info_plus: ^11.3.0
   on_audio_query_forked: ^2.9.1
-  # El wrapper declara mal su default_package; se agrega la implementación
-  # Android explícitamente para que se registre. Ver notas en README.
-  on_audio_query_android_v1_8: ^1.1.1
   permission_handler: ^12.0.0
   shared_preferences: ^2.5.3
   get_it: ^8.0.3
+  # Para el botón de contacto de la pantalla "Acerca de" (abre el correo).
+  url_launcher: ^6.3.1
   # Cachea las carátulas en disco para poder pasarlas a la notificación.
   path_provider: ^2.1.5
+
+dependency_overrides:
+  # on_audio_query_forked 2.9.1 declara mal su default_package de Android
+  # (apunta a "on_audio_query_android", que no existe; la implementación real
+  # que usa es "on_audio_query_android_v1_8"). Eso genera un warning en cada
+  # comando de Flutter. Se usa una copia local con esa única línea corregida
+  # en vez de la de pub.dev. Ver packages/on_audio_query_forked/README_PATCH.md.
+  on_audio_query_forked:
+    path: packages/on_audio_query_forked
 
 dev_dependencies:
   flutter_test:

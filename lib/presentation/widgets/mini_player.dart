@@ -23,8 +23,14 @@ class MiniPlayer extends StatelessWidget {
         final songId = item.extras?['songId'] as int?;
         final theme = Theme.of(context);
 
-        return Material(
-          color: theme.colorScheme.surfaceContainerHigh,
+        return Container(
+          margin: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 16)],
+          ),
+          clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const NowPlayingScreen()),
@@ -47,12 +53,12 @@ class MiniPlayer extends StatelessWidget {
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 8),
+                      horizontal: 10, vertical: 6),
                   child: Row(
                     children: [
                       if (songId != null)
                         SongArtwork(
-                            songId: songId, size: 44, borderRadius: 6),
+                            songId: songId, size: 48, borderRadius: 8),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(

@@ -15,6 +15,12 @@ class SongMapper {
         duration: model.duration != null
             ? Duration(milliseconds: model.duration!)
             : null,
+        // MediaStore.DATE_ADDED viene en segundos, no milisegundos (a
+        // diferencia de la mayoría de los otros campos de fecha de Android).
+        dateAdded: model.dateAdded != null
+            ? DateTime.fromMillisecondsSinceEpoch(model.dateAdded! * 1000)
+            : null,
+        genre: (model.genre?.trim().isEmpty ?? true) ? null : model.genre!.trim(),
       );
 
   static MediaItem toMediaItem(Song song) => MediaItem(

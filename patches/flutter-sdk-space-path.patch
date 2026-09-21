@@ -1,0 +1,13 @@
+diff --git a/packages/flutter_tools/gradle/src/main/kotlin/tasks/FlutterTaskHelper.kt b/packages/flutter_tools/gradle/src/main/kotlin/tasks/FlutterTaskHelper.kt
+index 8909602d022..d029f7ce0e0 100644
+--- a/packages/flutter_tools/gradle/src/main/kotlin/tasks/FlutterTaskHelper.kt
++++ b/packages/flutter_tools/gradle/src/main/kotlin/tasks/FlutterTaskHelper.kt
+@@ -58,7 +58,7 @@ object FlutterTaskHelper {
+             val matcher = Regex("""(\\ |\S)+""").findAll(fileString)
+             // then we replace all escaped spaces with regular spaces
+             val depList =
+-                matcher.map { it.value.replace("\\\\ ", " ") }.toList()
++                matcher.map { it.value.replace("\\ ", " ") }.toList()
+             return project.files(depList)
+         }
+         return project.files()

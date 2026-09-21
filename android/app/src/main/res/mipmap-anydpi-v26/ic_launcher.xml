@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icono adaptativo (Android 8.0+). El launcher recorta esto con su propia
+     máscara (círculo, squircle, etc.), por eso el glifo vive en
+     ic_launcher_foreground.png dentro de la zona segura central. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

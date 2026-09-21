@@ -2,18 +2,31 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 
 import 'package:tk_music/core/di/service_locator.dart';
-import 'package:tk_music/presentation/widgets/app_providers.dart';
+import 'package:tk_music/presentation/pages/favorites_tab.dart';
+import 'package:tk_music/presentation/pages/home_tab.dart';
+import 'package:tk_music/presentation/pages/library_tab.dart';
+import 'package:tk_music/presentation/pages/search_tab.dart';
+import 'package:tk_music/presentation/widgets/app_drawer.dart';
+import 'package:tk_music/presentation/widgets/app_header.dart';
+import 'package:tk_music/presentation/widgets/automix_status_button.dart';
 import 'package:tk_music/presentation/widgets/mini_player.dart';
-import 'package:tk_music/presentation/widgets/song_tile.dart';
 
-class MusicPlayerScreen extends StatelessWidget {
+class MusicPlayerScreen extends StatefulWidget {
   const MusicPlayerScreen({super.key});
+
+  @override
+  State<MusicPlayerScreen> createState() => _MusicPlayerScreenState();
+}
+
+class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
+  int _tabIndex = 0;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      drawer: const AppDrawer(),
       appBar: AppBar(
-        title: const Text('Reproductor Android'),
+        title: const AppHeaderTitle(),
         actions: [
           if (isAudioAvailable)
             StreamBuilder<PlaybackState>(
@@ -33,105 +46,97 @@ class MusicPlayerScreen extends StatelessWidget {
                 );
               },
             ),
+          const ProfileAvatarButton(),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          _SearchBar(),
-          Expanded(child: _SongList()),
-          const MiniPlayer(),
+          Column(
+            children: [
+              if (!isAudioAvailable) const _AudioUnavailableBanner(),
+              Expanded(
+                // IndexedStack conserva el estado (scroll, texto de
+                // búsqueda) de cada pestaña al cambiar entre ellas, en vez
+                // de reconstruirlas.
+                child: IndexedStack(
+                  index: _tabIndex,
+                  children: const [
+                    HomeTab(),
+                    SearchTab(),
+                    LibraryTab(),
+                    FavoritesTab(),
+                  ],
+                ),
+              ),
+              const MiniPlayer(),
+            ],
+          ),
+          // El Mezclador automático puede seguir sonando aunque se haya
+          // salido de su pantalla (ver AutomixEngine.instance) — este botón
+          // avisa que sigue activo y deja volver a esa pantalla.
+          const Positioned(
+            right: 16,
+            bottom: 84,
+            child: AutomixStatusButton(),
+          ),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tabIndex,
+        onDestinationSelected: (index) => setState(() => _tabIndex = index),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home),
+            label: 'Principal',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.search),
+            label: 'Buscar',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.library_music_outlined),
+            selectedIcon: Icon(Icons.library_music),
+            label: 'Biblioteca',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.thumb_up_outlined),
+            selectedIcon: Icon(Icons.thumb_up),
+            label: 'Favoritos',
+          ),
         ],
       ),
     );
   }
 }
 
-class _SearchBar extends StatelessWidget {
+/// Se muestra cuando `AudioService.init()` falló o se colgó al arrancar
+/// (ver main.dart). Sin esto, tocar una canción no hace nada y no hay forma
+/// de saber por qué: la app deshabilita toda la reproducción a propósito
+/// para no crashear, pero eso quedaba invisible para quien la usa.
+class _AudioUnavailableBanner extends StatelessWidget {
+  const _AudioUnavailableBanner();
+
   @override
   Widget build(BuildContext context) {
-    final provider = AppProviders.songOf(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      child: TextField(
-        decoration: const InputDecoration(
-          hintText: 'Buscar canción, artista o álbum',
-          prefixIcon: Icon(Icons.search),
-          border: OutlineInputBorder(),
-        ),
-        onChanged: provider.updateSearch,
-      ),
-    );
-  }
-}
-
-class _SongList extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final provider = AppProviders.songOf(context);
-
-    if (provider.loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (provider.failure != null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.error_outline, size: 48),
-            const SizedBox(height: 12),
-            Text(provider.failure!.message),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: provider.loadSongs,
-              child: const Text('Reintentar'),
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.errorContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, color: theme.colorScheme.onErrorContainer),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'No se pudo iniciar el reproductor de audio. Cierra la app '
+              'por completo y vuelve a abrirla.',
+              style: TextStyle(color: theme.colorScheme.onErrorContainer),
             ),
-          ],
-        ),
-      );
-    }
-
-    if (provider.songs.isEmpty) {
-      return const Center(child: Text('No se encontraron canciones'));
-    }
-
-    if (!isAudioAvailable) {
-      return _buildSongList(context, provider, null);
-    }
-
-    return StreamBuilder<MediaItem?>(
-      stream: sl<AudioHandler>().mediaItem,
-      builder: (context, snapshot) {
-        return _buildSongList(context, provider, snapshot.data?.id);
-      },
-    );
-  }
-
-  Widget _buildSongList(
-      BuildContext context, dynamic provider, String? currentId) {
-    final visibleSongs = provider.visibleSongs;
-
-    if (visibleSongs.isEmpty) {
-      return const Center(child: Text('Sin resultados'));
-    }
-
-    return ListView.builder(
-      itemCount: visibleSongs.length,
-      itemBuilder: (context, index) {
-        final song = visibleSongs[index];
-        return SongTile(
-          song: song,
-          isCurrent: song.filePath == currentId,
-          onTap: isAudioAvailable
-              ? () async {
-                  final audioHandler = sl<AudioHandler>();
-                  final globalIndex = provider.songs.indexOf(song);
-                  await audioHandler.skipToQueueItem(globalIndex);
-                  await audioHandler.play();
-                }
-              : null,
-        );
-      },
+          ),
+        ],
+      ),
     );
   }
 }

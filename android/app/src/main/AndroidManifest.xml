@@ -1,16 +1,32 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
+    <!-- Solo hace falta para escribir en Download en Android 9 o anterior
+         (API < 29): desde Android 10 los inserts a MediaStore.Downloads no
+         la requieren. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- audio_service la necesita para mantener el CPU activo mientras suena
+         música con la pantalla apagada o la app en segundo plano; sin esto,
+         AudioService.enterPlayingState() lanza SecurityException y nunca
+         llega a promover el servicio a primer plano (por eso no aparecía
+         la notificación ni seguía sonando al minimizar). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Para "Sincronizar con otro teléfono" (sesión Bluetooth Classic con
+         un dispositivo ya emparejado, sin escaneo/descubrimiento, así que
+         no hace falta permiso de ubicación). -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application
         android:name="${applicationName}"
-        android:label="tk_music"
+        android:label="TK Music"
         android:icon="@mipmap/ic_launcher">
 
         <activity

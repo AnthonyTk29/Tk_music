@@ -1,0 +1,11 @@
+--- a/pubspec.yaml (on_audio_query_forked 2.9.1, pub.dev)
++++ b/pubspec.yaml (packages/on_audio_query_forked, este repo)
+@@ -44,7 +44,7 @@
+   plugin:
+     platforms:
+       android:
+-        default_package: on_audio_query_android
++        default_package: on_audio_query_android_v1_8
+       ios:
+         default_package: on_audio_query_ios
+       web:

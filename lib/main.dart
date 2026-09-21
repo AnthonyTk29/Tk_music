@@ -5,10 +5,14 @@ import 'package:tk_music/core/di/service_locator.dart';
 import 'package:tk_music/core/theme/app_theme.dart';
 import 'package:tk_music/services/audio_handler.dart';
 import 'package:tk_music/presentation/providers/permission_provider.dart';
+import 'package:tk_music/presentation/providers/profile_provider.dart';
 import 'package:tk_music/presentation/providers/song_provider.dart';
 import 'package:tk_music/presentation/pages/music_player_screen.dart';
+import 'package:tk_music/presentation/pages/profile_picker_screen.dart';
 import 'package:tk_music/presentation/pages/request_permission_screen.dart';
+import 'package:tk_music/presentation/pages/splash_screen.dart';
 import 'package:tk_music/presentation/widgets/app_providers.dart';
+import 'package:tk_music/services/waveform_loader.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,7 +22,7 @@ void main() async {
     audioHandler = await AudioService.init(
       builder: () => MyAudioHandler(),
       config: const AudioServiceConfig(
-        androidNotificationChannelId: 'com.example.tk_music.channel.audio',
+        androidNotificationChannelId: 'com.tkmusic.app.channel.audio',
         androidNotificationChannelName: 'Audio playback',
         androidNotificationOngoing: true,
       ),
@@ -28,13 +32,21 @@ void main() async {
   }
 
   initServiceLocator(audioHandler);
+  // Arranca una sola vez acá, no desde ninguna pantalla: así la forma de
+  // onda de lo que esté sonando sigue analizándose siempre, sin importar
+  // qué pantalla esté abierta ni si la app pasa a segundo plano.
+  if (audioHandler != null) {
+    WaveformLoader.instance.start(audioHandler);
+  }
 
   final permissionProvider = PermissionProvider();
   final songProvider = SongProvider();
+  final profileProvider = ProfileProvider();
 
   runApp(MyApp(
     permissionProvider: permissionProvider,
     songProvider: songProvider,
+    profileProvider: profileProvider,
   ));
 }
 
@@ -43,20 +55,24 @@ class MyApp extends StatelessWidget {
     super.key,
     required this.permissionProvider,
     required this.songProvider,
+    required this.profileProvider,
   });
 
   final PermissionProvider permissionProvider;
   final SongProvider songProvider;
+  final ProfileProvider profileProvider;
 
   @override
   Widget build(BuildContext context) {
     return AppProviders(
       permissionProvider: permissionProvider,
       songProvider: songProvider,
+      profileProvider: profileProvider,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
+        themeMode: ThemeMode.dark,
         home: const _AppShell(),
       ),
     );
@@ -72,11 +88,30 @@ class _AppShell extends StatefulWidget {
 
 class _AppShellState extends State<_AppShell> {
   String? _error;
+  bool _checked = false;
+  bool _splashDone = false;
 
   @override
   void initState() {
     super.initState();
-    _check();
+    // Tiempo fijo para que el logo se alcance a ver; la inicialización real
+    // (permisos, perfil, biblioteca) ya corre en paralelo desde main().
+    Future.delayed(const Duration(milliseconds: 1400), () {
+      if (mounted) setState(() => _splashDone = true);
+    });
+  }
+
+  // dependOnInheritedWidgetOfExactType (usado dentro de AppProviders.permissionOf)
+  // no puede llamarse desde initState: el widget aún no terminó de montarse y el
+  // framework lo rechaza en tiempo de ejecución. didChangeDependencies es el punto
+  // correcto; se guarda con _checked para que sólo corra una vez.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_checked) {
+      _checked = true;
+      _check();
+    }
   }
 
   Future<void> _check() async {
@@ -90,6 +125,10 @@ class _AppShellState extends State<_AppShell> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_splashDone) {
+      return const SplashScreen();
+    }
+
     if (_error != null) {
       return Scaffold(
         body: Center(
@@ -105,14 +144,25 @@ class _AppShellState extends State<_AppShell> {
                 child: Text(_error!, textAlign: TextAlign.center),
               ),
               const SizedBox(height: 16),
-              FilledButton(
+              FilledButton.icon(
                 onPressed: () => setState(() { _error = null; _check(); }),
-                child: const Text('Reintentar'),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Reintentar'),
               ),
             ],
           ),
         ),
       );
+    }
+
+    final profile = AppProviders.profileOf(context);
+    if (profile.loading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (profile.needsProfile) {
+      return const ProfilePickerScreen();
     }
 
     final granted = AppProviders.permissionOf(context).granted;

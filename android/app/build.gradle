@@ -28,7 +28,7 @@ if (flutterVersionName == null) {
 }
 
 android {
-    namespace "com.example.tk_music"
+    namespace "com.tkmusic.app"
     compileSdkVersion flutter.compileSdkVersion
     ndkVersion flutter.ndkVersion
 
@@ -46,7 +46,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.example.tk_music"
+        applicationId "com.tkmusic.app"
         minSdkVersion 24
         targetSdkVersion 35
         versionCode flutterVersionCode.toInteger()
@@ -73,6 +73,13 @@ android {
             if (keyPropertiesFile.exists()) {
                 signingConfig signingConfigs.release
             }
+            // R8 sin reglas de keep para audio_service/media3 (ExoPlayer)
+            // rompe la carga de audio en release: NullPointerException al
+            // llamar setAudioSources porque poda clases usadas por
+            // reflexión. Desactivado hasta tener proguard-rules.pro
+            // completas para esas dependencias.
+            minifyEnabled false
+            shrinkResources false
         }
     }
 }

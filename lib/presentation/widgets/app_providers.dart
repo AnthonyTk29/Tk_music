@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:tk_music/presentation/providers/permission_provider.dart';
+import 'package:tk_music/presentation/providers/profile_provider.dart';
 import 'package:tk_music/presentation/providers/song_provider.dart';
 
 class AppProviders extends StatefulWidget {
@@ -8,11 +9,13 @@ class AppProviders extends StatefulWidget {
     super.key,
     required this.songProvider,
     required this.permissionProvider,
+    required this.profileProvider,
     required this.child,
   });
 
   final SongProvider songProvider;
   final PermissionProvider permissionProvider;
+  final ProfileProvider profileProvider;
   final Widget child;
 
   static SongProvider songOf(BuildContext context) =>
@@ -22,6 +25,10 @@ class AppProviders extends StatefulWidget {
   static PermissionProvider permissionOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<_InheritedProviders>()!
           .permissionProvider;
+
+  static ProfileProvider profileOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_InheritedProviders>()!
+          .profileProvider;
 
   @override
   State<AppProviders> createState() => _AppProvidersState();
@@ -36,6 +43,7 @@ class _AppProvidersState extends State<AppProviders> {
     _notifier = MultiNotifier._([
       widget.songProvider,
       widget.permissionProvider,
+      widget.profileProvider,
     ]);
   }
 
@@ -51,6 +59,7 @@ class _AppProvidersState extends State<AppProviders> {
       notifier: _notifier,
       songProvider: widget.songProvider,
       permissionProvider: widget.permissionProvider,
+      profileProvider: widget.profileProvider,
       child: widget.child,
     );
   }
@@ -61,11 +70,13 @@ class _InheritedProviders extends InheritedNotifier<MultiNotifier> {
     required MultiNotifier notifier,
     required this.songProvider,
     required this.permissionProvider,
+    required this.profileProvider,
     required super.child,
   }) : super(notifier: notifier);
 
   final SongProvider songProvider;
   final PermissionProvider permissionProvider;
+  final ProfileProvider profileProvider;
 }
 
 class MultiNotifier extends ChangeNotifier {
