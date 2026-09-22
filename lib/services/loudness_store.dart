@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:tk_music/core/errors/safe_json.dart';
 import 'package:tk_music/domain/entities/song.dart';
 
 import 'active_profile.dart';
@@ -53,9 +54,13 @@ class LoudnessStore {
   Future<Map<int, double>> _readCache() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_key);
-    if (raw == null) return {};
-    final decoded = jsonDecode(raw) as Map<String, dynamic>;
-    return decoded.map((k, v) => MapEntry(int.parse(k), (v as num).toDouble()));
+    return readJson(
+      raw,
+      (decoded) => (decoded as Map<String, dynamic>)
+          .map((k, v) => MapEntry(int.parse(k), (v as num).toDouble())),
+      fallback: const {},
+      context: 'LoudnessStore._readCache',
+    );
   }
 
   Future<void> _writeCache(Map<int, double> cache) async {

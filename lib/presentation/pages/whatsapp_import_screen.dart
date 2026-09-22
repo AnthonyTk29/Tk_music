@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 
 import 'package:tk_music/core/di/service_locator.dart';
+import 'package:tk_music/core/errors/app_exception.dart';
+import 'package:tk_music/core/errors/error_reporter.dart';
 import 'package:tk_music/domain/entities/song.dart';
 import 'package:tk_music/domain/repositories/song_repository.dart';
 import 'package:tk_music/presentation/widgets/alphabet_index_bar.dart';
@@ -179,12 +181,18 @@ class _WhatsAppImportScreenState extends State<WhatsAppImportScreen> {
 
     var ok = 0;
     var failed = 0;
+    final failures = <String>[];
     for (final song in toImport) {
       try {
         await _importer.importToDownloads(song);
         ok++;
-      } catch (_) {
+      } catch (e, stack) {
         failed++;
+        failures.add(e is AppException ? e.userMessage : e.toString());
+        // Sin diálogo por cada fallo (es un lote, no un único intento) —
+        // solo se registra; el resumen de todo el lote se muestra una sola
+        // vez al final.
+        ErrorReporter.instance.log(e, stack);
       }
     }
 
@@ -197,11 +205,13 @@ class _WhatsAppImportScreenState extends State<WhatsAppImportScreen> {
     await AppProviders.songOf(context).loadSongs();
     if (!mounted) return;
 
+    final message = failures.isEmpty
+        ? '$ok audio(s) importado(s) a Download'
+        : '$ok importado(s), $failed falló(aron)\n\n${failures.take(2).join('\n')}';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(failed == 0
-            ? '$ok audio(s) importado(s) a Download'
-            : '$ok importado(s), $failed falló(aron)'),
+        content: Text(message),
+        duration: const Duration(seconds: 6),
       ),
     );
   }

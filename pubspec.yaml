@@ -46,6 +46,12 @@ dependencies:
   url_launcher: ^6.3.1
   # Cachea las carátulas en disco para poder pasarlas a la notificación.
   path_provider: ^2.1.5
+  # Reporta crashes reales de usuarios (Java/Kotlin y nativos) a la consola
+  # de Firebase — para casos como "se instala pero no abre en tal equipo"
+  # que no se pueden diagnosticar sin un log del dispositivo de otra
+  # persona.
+  firebase_core: ^3.8.0
+  firebase_crashlytics: ^4.2.0
 
 dependency_overrides:
   # on_audio_query_forked 2.9.1 declara mal su default_package de Android

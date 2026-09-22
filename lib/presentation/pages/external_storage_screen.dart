@@ -67,19 +67,16 @@ class ExternalStorageScreen extends StatelessWidget {
     );
   }
 
+  // Sin try/catch acá: si falla, ExternalStorageStore.addFromPicker() ya
+  // tira una AppException con el mensaje correcto — sube sola hasta la
+  // alerta global en vez de que esta pantalla arme la suya con el texto
+  // crudo de la excepción.
   Future<void> _addRoot(BuildContext context) async {
-    try {
-      final picked = await ExternalStorageStore.instance.addFromPicker();
-      if (picked == null || !context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('"${picked.name}" conectado')),
-      );
-    } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No se pudo conectar: $e')),
-      );
-    }
+    final picked = await ExternalStorageStore.instance.addFromPicker();
+    if (picked == null || !context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('"${picked.name}" conectado')),
+    );
   }
 
   Future<void> _confirmRemove(

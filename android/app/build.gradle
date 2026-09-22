@@ -2,6 +2,8 @@ plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
     id 'dev.flutter.flutter-gradle-plugin'
+    id 'com.google.gms.google-services'
+    id 'com.google.firebase.crashlytics'
 }
 
 def localProperties = new Properties()
@@ -82,6 +84,14 @@ android {
             shrinkResources false
         }
     }
+
+    // Sube los símbolos nativos (.so) para que un crash nativo (por ejemplo
+    // una librería que falla al cargar en equipos con páginas de memoria
+    // de 16KB) se vea legible en la consola de Firebase en vez de
+    // direcciones de memoria crudas.
+    firebaseCrashlytics {
+        nativeSymbolUploadEnabled true
+    }
 }
 
 flutter {
@@ -89,4 +99,10 @@ flutter {
 }
 
 dependencies {
+    implementation platform('com.google.firebase:firebase-bom:33.7.0')
+    implementation 'com.google.firebase:firebase-crashlytics'
+    // Componente NDK: sin esto, Crashlytics solo ve crashes Java/Kotlin —
+    // uno nativo (dlopen fallando al cargar un .so, por ejemplo) no
+    // pasaría por el manejador de excepciones de Java y quedaría invisible.
+    implementation 'com.google.firebase:firebase-crashlytics-ndk'
 }

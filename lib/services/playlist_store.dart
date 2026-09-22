@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:tk_music/core/errors/safe_json.dart';
 import 'package:tk_music/domain/entities/playlist.dart';
 import 'active_profile.dart';
 
@@ -20,16 +21,18 @@ class PlaylistStore extends ChangeNotifier {
   Future<List<Playlist>> getAll() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_key);
-    if (raw == null) return [];
-
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded.cast<Map<String, dynamic>>().map((json) {
-      return Playlist(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        songIds: (json['songIds'] as List<dynamic>).cast<int>(),
-      );
-    }).toList();
+    return readJson(
+      raw,
+      (decoded) => (decoded as List<dynamic>).cast<Map<String, dynamic>>().map((json) {
+        return Playlist(
+          id: json['id'] as String,
+          name: json['name'] as String,
+          songIds: (json['songIds'] as List<dynamic>).cast<int>(),
+        );
+      }).toList(),
+      fallback: const [],
+      context: 'PlaylistStore.getAll',
+    );
   }
 
   Future<Playlist> create(String name) async {

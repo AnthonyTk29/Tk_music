@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:tk_music/core/errors/safe_json.dart';
 import 'active_profile.dart';
 
 /// Guarda los niveles del ecualizador (ganancia por banda + si está
@@ -30,10 +31,13 @@ class EqualizerStore {
   Future<Map<int, double>> getGains() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_gainsKey);
-    if (raw == null) return {};
-    final decoded = jsonDecode(raw) as Map<String, dynamic>;
-    return decoded
-        .map((k, v) => MapEntry(int.parse(k), (v as num).toDouble()));
+    return readJson(
+      raw,
+      (decoded) => (decoded as Map<String, dynamic>)
+          .map((k, v) => MapEntry(int.parse(k), (v as num).toDouble())),
+      fallback: const {},
+      context: 'EqualizerStore.getGains',
+    );
   }
 
   Future<void> saveGain(int bandIndex, double gain) async {

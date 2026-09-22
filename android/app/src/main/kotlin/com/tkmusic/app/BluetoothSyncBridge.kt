@@ -5,6 +5,10 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
@@ -51,6 +55,57 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
     private var eventSink: EventChannel.EventSink? = null
     private val running = AtomicBoolean(false)
 
+    // Direcciones de TODOS los dispositivos Bluetooth que tienen una sesión
+    // activa ahora mismo (no solo los de esta app): se mantiene siguiendo las
+    // broadcasts ACL_CONNECTED/ACL_DISCONNECTED del sistema, para que la
+    // pantalla pueda marcar cuáles están "conectados ahora" al emparejar.
+    private val activeAclDevices: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val aclReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val device: BluetoothDevice? = if (Build.VERSION.SDK_INT >= 33) {
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+            }
+            val address = try {
+                device?.address ?: return
+            } catch (e: SecurityException) {
+                return
+            }
+            when (intent.action) {
+                BluetoothDevice.ACTION_ACL_CONNECTED -> {
+                    activeAclDevices.add(address)
+                    emitAclState(address, true)
+                }
+                BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                    activeAclDevices.remove(address)
+                    emitAclState(address, false)
+                }
+            }
+        }
+    }
+
+    init {
+        // Context-registered receiver para ver qué dispositivos tienen una
+        // sesión Bluetooth activa. Son broadcasts de sistema protegidas, así
+        // que en Android 13+ se registra sin marcar como exported.
+        val filter = IntentFilter().apply {
+            addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                activity.registerReceiver(aclReceiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                activity.registerReceiver(aclReceiver, filter)
+            }
+        } catch (e: Exception) {
+            // Sin permiso de Bluetooth aún, o el registro falla: no es fatal,
+            // solo se pierde el marcado en vivo hasta que haya permiso.
+        }
+    }
+
     fun setEventSink(sink: EventChannel.EventSink?) {
         eventSink = sink
     }
@@ -58,6 +113,8 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
     fun handle(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "getPairedDevices" -> getPairedDevices(result)
+            "getCapacity" -> getCapacity(result)
+            "getActiveSessions" -> getActiveSessions(result)
             "startHosting" -> startHosting(result)
             "connectToDevice" -> {
                 val address = call.argument<String>("address")
@@ -71,6 +128,18 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
                 val durationMs = call.argument<Number>("durationMs")?.toLong()
                 if (path == null) result.error("BAD_ARGS", "Falta path", null)
                 else sendSongFile(path, title, artist, durationMs, result)
+            }
+            "sendSongFileTo" -> {
+                val address = call.argument<String>("address")
+                val path = call.argument<String>("path")
+                val title = call.argument<String>("title") ?: "Canción"
+                val artist = call.argument<String>("artist")
+                val durationMs = call.argument<Number>("durationMs")?.toLong()
+                if (address == null || path == null) {
+                    result.error("BAD_ARGS", "Falta address/path", null)
+                } else {
+                    sendSongFileTo(address, path, title, artist, durationMs, result)
+                }
             }
             "sendControl" -> {
                 val json = call.argument<String>("json")
@@ -91,7 +160,34 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
         }
     }
 
+    // Snapshot de las direcciones con sesión activa en este momento. La
+    // pantalla lo pide al cargar la lista de dispositivos y después se
+    // actualiza solo con los eventos ACL que emite aclReceiver.
+    private fun getActiveSessions(result: MethodChannel.Result) {
+        result.success(activeAclDevices.toList())
+    }
+
+    private fun emitAclState(address: String, connected: Boolean) {
+        val sink = eventSink ?: return
+        activity.runOnUiThread {
+            sink.success(
+                mapOf(
+                    "type" to "device_connected_changed",
+                    "address" to address,
+                    "connected" to connected
+                )
+            )
+        }
+    }
+
+    // Limpia el receiver de broadcasts y las conexiones al cerrar la
+    // actividad, para no filtrar el activity al rotar o salir.
     fun shutdown() {
+        try {
+            activity.unregisterReceiver(aclReceiver)
+        } catch (e: IllegalArgumentException) {
+            // Ya estaba dado de baja.
+        }
         disconnect(null)
     }
 
@@ -120,6 +216,38 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
             result.success(devices)
         } catch (e: SecurityException) {
             result.error("NO_PERMISSION", e.message, null)
+        }
+    }
+
+    // Cálculo previo de cuántas sesiones Bluetooth activas puede sostener el
+    // dispositivo. Un piconet BR/EDR (Bluetooth clásico) da soporte a 1
+    // maestro + hasta 7 esclavos activos, y este sincronizador abre una
+    // sesión RFCOMM por invitado, así que 4 invitados + este teléfono entran
+    // de sobra en cualquier equipo con Classic. Lo que SÍ se valida acá es
+    // la parte real que puede hacer fallar la función: dispositivos que solo
+    // traen Bluetooth LE (tablets/equipos nuevos que omiten BR/EDR) no pueden
+    // ser anfitrión de ni una sola sesión RFCOMM, y eso no se puede saber
+    // hasta probar — por eso se detecta por feature antes de ofrecer el rol.
+    private fun getCapacity(result: MethodChannel.Result) {
+        if (adapter == null || !hasBluetoothPermission()) {
+            result.success(mapOf("supported" to false, "maxConcurrent" to 0, "reason" to "no_bluetooth"))
+            return
+        }
+        val pm = activity.packageManager
+        val hasClassic = pm.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH)
+        try {
+            if (!hasClassic) {
+                // BLE solo: no hay RFCOMM (Bluetooth clásico), la sesión no
+                // puede ni arrancar.
+                result.success(mapOf("supported" to false, "maxConcurrent" to 0, "reason" to "le_only"))
+                return
+            }
+            // Máximo del estándar BR/EDR; esta app nunca pide más de 4
+            // invitados, así que el tope efectivo lo vuelve a poner Dart
+            // contra PartySyncEngine.maxGuests.
+            result.success(mapOf("supported" to true, "maxConcurrent" to 7, "reason" to null))
+        } catch (e: Exception) {
+            result.error("CAPACITY_FAILED", e.message, null)
         }
     }
 
@@ -295,6 +423,58 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
         }
     }
 
+    // Arma la metadata y manda el archivo por [conn] — la parte compartida
+    // entre mandarlo a todos (sendSongFile) y a uno solo (sendSongFileTo,
+    // para un invitado que se conecta después de que ya se mandó la
+    // canción al resto).
+    private fun writeSongFileTo(
+        conn: Connection,
+        path: String,
+        title: String,
+        artist: String?,
+        durationMs: Long?
+    ) {
+        val file = File(path)
+        val meta = JSONObject().apply {
+            put("fileName", file.name)
+            put("fileSize", file.length())
+            put("title", title)
+            put("artist", artist)
+            put("durationMs", durationMs ?: 0L)
+        }
+        val metaBytes = meta.toString().toByteArray(Charsets.UTF_8)
+        synchronized(conn) {
+            conn.output.writeByte(2)
+            conn.output.writeInt(metaBytes.size)
+            conn.output.write(metaBytes)
+            conn.output.flush()
+
+            file.inputStream().use { input ->
+                val buffer = ByteArray(16 * 1024)
+                var sent = 0L
+                val total = file.length()
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    conn.output.write(buffer, 0, read)
+                    sent += read
+                    if (sent % (256 * 1024) < buffer.size) {
+                        val progress = sent
+                        activity.runOnUiThread {
+                            eventSink?.success(
+                                mapOf(
+                                    "type" to "send_progress", "sent" to progress,
+                                    "total" to total, "address" to conn.address
+                                )
+                            )
+                        }
+                    }
+                }
+                conn.output.flush()
+            }
+        }
+    }
+
     // Manda el archivo a TODOS los invitados conectados en paralelo (un
     // hilo por invitado, cada uno con su propio socket — no se serializa
     // artificialmente más de lo que ya limita el radio Bluetooth
@@ -313,51 +493,13 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
             return
         }
         thread {
-            val file = File(path)
-            val meta = JSONObject().apply {
-                put("fileName", file.name)
-                put("fileSize", file.length())
-                put("title", title)
-                put("artist", artist)
-                put("durationMs", durationMs ?: 0L)
-            }
-            val metaBytes = meta.toString().toByteArray(Charsets.UTF_8)
             val latch = CountDownLatch(targets.size)
             var lastError: Exception? = null
 
             for (conn in targets) {
                 thread {
                     try {
-                        synchronized(conn) {
-                            conn.output.writeByte(2)
-                            conn.output.writeInt(metaBytes.size)
-                            conn.output.write(metaBytes)
-                            conn.output.flush()
-
-                            file.inputStream().use { input ->
-                                val buffer = ByteArray(16 * 1024)
-                                var sent = 0L
-                                val total = file.length()
-                                while (true) {
-                                    val read = input.read(buffer)
-                                    if (read < 0) break
-                                    conn.output.write(buffer, 0, read)
-                                    sent += read
-                                    if (sent % (256 * 1024) < buffer.size) {
-                                        val progress = sent
-                                        activity.runOnUiThread {
-                                            eventSink?.success(
-                                                mapOf(
-                                                    "type" to "send_progress", "sent" to progress,
-                                                    "total" to total, "address" to conn.address
-                                                )
-                                            )
-                                        }
-                                    }
-                                }
-                                conn.output.flush()
-                            }
-                        }
+                        writeSongFileTo(conn, path, title, artist, durationMs)
                     } catch (e: Exception) {
                         lastError = e
                     } finally {
@@ -369,6 +511,34 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
             activity.runOnUiThread {
                 if (lastError == null) result.success(null)
                 else result.error("SEND_FAILED", lastError?.message, null)
+            }
+        }
+    }
+
+    // Manda el archivo a UN SOLO invitado — hace falta cuando alguien se
+    // conecta después de que ya se mandó la canción al resto (p. ej. tras
+    // "Empezar con los que ya están"): reenviar con sendSongFile() de
+    // nuevo le volvería a mandar el archivo también a los que ya lo tienen
+    // y ya están sincronizando el reloj, interrumpiéndolos sin necesidad.
+    private fun sendSongFileTo(
+        address: String,
+        path: String,
+        title: String,
+        artist: String?,
+        durationMs: Long?,
+        result: MethodChannel.Result
+    ) {
+        val conn = connections[address]
+        if (conn == null) {
+            result.error("NOT_CONNECTED", "Invitado no conectado", null)
+            return
+        }
+        thread {
+            try {
+                writeSongFileTo(conn, path, title, artist, durationMs)
+                activity.runOnUiThread { result.success(null) }
+            } catch (e: Exception) {
+                activity.runOnUiThread { result.error("SEND_FAILED", e.message, null) }
             }
         }
     }

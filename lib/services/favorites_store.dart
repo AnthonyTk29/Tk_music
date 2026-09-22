@@ -16,7 +16,11 @@ class FavoritesStore extends ChangeNotifier {
   Future<Set<int>> getAll() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(_key) ?? const [];
-    return raw.map(int.parse).toSet();
+    // tryParse en vez de parse: una entrada corrupta se descarta sola en
+    // vez de tirar FormatException y romper la lectura de TODOS los
+    // favoritos (esto se lee en pantallas que se abren apenas arranca la
+    // app).
+    return raw.map(int.tryParse).whereType<int>().toSet();
   }
 
   Future<bool> isLiked(int songId) async => (await getAll()).contains(songId);

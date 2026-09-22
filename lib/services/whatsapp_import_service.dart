@@ -1,5 +1,7 @@
 import 'package:flutter/services.dart';
 
+import 'package:tk_music/core/errors/app_error_code.dart';
+import 'package:tk_music/core/errors/app_exception.dart';
 import 'package:tk_music/domain/entities/song.dart';
 
 /// Patrón de nombre que usa WhatsApp para notas de voz y audios reenviados
@@ -32,11 +34,34 @@ class WhatsAppImportService {
     final fileName = _cleanFileName(song.title, extension);
     final mimeType = _mimeByExtension[extension] ?? 'audio/*';
 
-    await _channel.invokeMethod('importToDownloads', {
-      'mediaStoreId': song.mediaStoreId,
-      'fileName': fileName,
-      'mimeType': mimeType,
-    });
+    try {
+      await _channel.invokeMethod('importToDownloads', {
+        'mediaStoreId': song.mediaStoreId,
+        'fileName': fileName,
+        'mimeType': mimeType,
+      });
+    } on PlatformException catch (e) {
+      throw AppException(
+        AppErrorCode.storageImportFailed,
+        userMessage: '$fileName — ${_describePlatformError(e)}',
+        technicalMessage: 'importToDownloads(${e.code}): ${e.message}',
+      );
+    }
+  }
+
+  String _describePlatformError(PlatformException e) {
+    switch (e.code) {
+      case 'INSERT_FAILED':
+        return 'No se pudo crear el archivo de destino en Download';
+      case 'SOURCE_NOT_FOUND':
+        return 'No se pudo abrir el audio original en WhatsApp';
+      case 'SOURCE_UNREADABLE':
+        return 'Sin permiso para leer el audio original';
+      case 'OUTPUT_FAILED':
+        return 'No se pudo escribir en la carpeta Download';
+      default:
+        return e.message ?? e.code;
+    }
   }
 
   String _extensionOf(String path) {

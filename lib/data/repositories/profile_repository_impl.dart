@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:tk_music/core/errors/safe_json.dart';
 import 'package:tk_music/domain/entities/profile.dart';
 import 'package:tk_music/domain/repositories/profile_repository.dart';
 
@@ -16,13 +17,15 @@ class ProfileRepositoryImpl implements ProfileRepository {
   Future<List<Profile>> getProfiles() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_profilesKey);
-    if (raw == null) return [];
-
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .cast<Map<String, dynamic>>()
-        .map((json) => Profile(id: json['id'] as String, name: json['name'] as String))
-        .toList();
+    return readJson(
+      raw,
+      (decoded) => (decoded as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .map((json) => Profile(id: json['id'] as String, name: json['name'] as String))
+          .toList(),
+      fallback: const [],
+      context: 'ProfileRepositoryImpl.getProfiles',
+    );
   }
 
   @override

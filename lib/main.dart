@@ -1,7 +1,14 @@
+import 'dart:async';
+
 import 'package:audio_service/audio_service.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 
 import 'package:tk_music/core/di/service_locator.dart';
+import 'package:tk_music/core/errors/app_error_code.dart';
+import 'package:tk_music/core/errors/app_exception.dart';
+import 'package:tk_music/core/errors/error_reporter.dart';
 import 'package:tk_music/core/theme/app_theme.dart';
 import 'package:tk_music/services/audio_handler.dart';
 import 'package:tk_music/presentation/providers/permission_provider.dart';
@@ -14,9 +21,34 @@ import 'package:tk_music/presentation/pages/splash_screen.dart';
 import 'package:tk_music/presentation/widgets/app_providers.dart';
 import 'package:tk_music/services/waveform_loader.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+void main() {
+  // Todo el arranque corre adentro de esta zona para que runZonedGuarded
+  // pueda ver hasta los errores async que se escapan de la zona de errores
+  // propia de Flutter (los que atrapa FlutterError.onError no alcanzan acá).
+  // Firebase se inicializa antes que cualquier otra cosa (incluido
+  // AudioService.init, que ya una vez colgó toda la apertura de la app en
+  // Android 14) para que Crashlytics ya esté activo si algo falla ahí.
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
 
+    try {
+      await Firebase.initializeApp();
+      FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+    } catch (e) {
+      debugPrint('Firebase init failed: $e');
+    }
+
+    await _runMain();
+  }, (error, stack) {
+    // Última red: cualquier excepción que nadie haya traducido a
+    // AppException (o que directamente nadie atrapó) cae acá. El reporter
+    // la envuelve como AppErrorCode.unknown, la registra y muestra la
+    // alerta si hay una pantalla montada — nunca queda invisible.
+    ErrorReporter.instance.report(error, stack);
+  });
+}
+
+Future<void> _runMain() async {
   AudioHandler? audioHandler;
   try {
     audioHandler = await AudioService.init(
@@ -27,8 +59,17 @@ void main() async {
         androidNotificationOngoing: true,
       ),
     ).timeout(const Duration(seconds: 10));
-  } catch (e) {
-    debugPrint('AudioService init failed: $e');
+  } catch (e, stack) {
+    ErrorReporter.instance.report(
+      AppException(
+        AppErrorCode.playbackInitFailed,
+        userMessage:
+            'No se pudo iniciar el reproductor. Podés seguir usando la app, '
+            'pero la reproducción no va a funcionar hasta reabrirla.',
+        technicalMessage: 'AudioService.init: $e',
+      ),
+      stack,
+    );
   }
 
   initServiceLocator(audioHandler);
@@ -70,6 +111,7 @@ class MyApp extends StatelessWidget {
       profileProvider: profileProvider,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
+        navigatorKey: ErrorReporter.instance.navigatorKey,
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
         themeMode: ThemeMode.dark,

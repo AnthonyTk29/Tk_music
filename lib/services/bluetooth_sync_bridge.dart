@@ -10,6 +10,22 @@ class PairedBluetoothDevice {
   final String address;
 }
 
+/// Capacidad de sincronización Bluetooth del dispositivo, calculada del lado
+/// nativo antes de ofrecer los roles: cuántas sesiones RFCOMM simultáneas
+/// puede sostener (máximo del estándar BR/EDR) y si Bluetooth clásico
+/// existe siquiera (sin eso la función no puede funcionar).
+class SyncCapacity {
+  const SyncCapacity({
+    required this.supported,
+    required this.maxConcurrent,
+    this.reason,
+  });
+
+  final bool supported;
+  final int maxConcurrent;
+  final String? reason;
+}
+
 sealed class BluetoothSyncEvent {}
 
 class ConnectedEvent extends BluetoothSyncEvent {
@@ -27,6 +43,15 @@ class DisconnectedEvent extends BluetoothSyncEvent {
 class ErrorEvent extends BluetoothSyncEvent {
   ErrorEvent(this.message);
   final String message;
+}
+
+/// Un dispositivo emparejado conectó (true) o desconectó (false) su sesión
+/// Bluetooth activa (broadcast ACL del sistema). Lo usa la pantalla para
+/// marcar en vivo cuáles tienen conexión "activa ahora".
+class DeviceConnectionChangedEvent extends BluetoothSyncEvent {
+  DeviceConnectionChangedEvent(this.address, this.connected);
+  final String address;
+  final bool connected;
 }
 
 class MessageEvent extends BluetoothSyncEvent {
@@ -75,7 +100,16 @@ class BluetoothSyncService {
   static const _channel = MethodChannel('tk_music/bluetooth_sync');
   static const _events = EventChannel('tk_music/bluetooth_sync/events');
 
-  Stream<BluetoothSyncEvent>? _eventStream;
+  // `static`, no de instancia: un EventChannel solo admite un único
+  // `receiveBroadcastStream()` registrado por canal. `BluetoothSyncService()`
+  // se construye suelto en varios lugares (PartySyncEngine tiene el suyo
+  // propio, y la pantalla de configuración crea otro aparte solo para
+  // escuchar qué dispositivos tienen sesión Bluetooth activa) — si esto
+  // fuera de instancia, el segundo `.listen()` le robaba el `eventSink`
+  // nativo al primero sin que nadie se enterara (mismo bug ya visto y
+  // arreglado en WaveformStore/SpectrogramStore), y esa pantalla dejaba de
+  // recibir actualizaciones apenas arrancaba el motor de sincronización.
+  static Stream<BluetoothSyncEvent>? _eventStream;
 
   Stream<BluetoothSyncEvent> get events {
     return _eventStream ??= _events.receiveBroadcastStream().map((raw) {
@@ -87,6 +121,10 @@ class BluetoothSyncService {
         'disconnected' =>
           DisconnectedEvent(map['reason'] as String? ?? '', address),
         'error' => ErrorEvent(map['message'] as String? ?? 'Error'),
+        'device_connected_changed' => DeviceConnectionChangedEvent(
+          address,
+          map['connected'] as bool? ?? false,
+        ),
         'message' => MessageEvent(
             jsonDecode(map['json'] as String) as Map<String, dynamic>,
             address,
@@ -130,6 +168,30 @@ class BluetoothSyncService {
 
   Future<void> startHosting() => _channel.invokeMethod('startHosting');
 
+  /// Direcciones de los dispositivos que tienen una sesión Bluetooth activa
+  /// en este momento (no solo los conectados a esta app: cualquier ACL
+  /// activo, p. ej. unos auriculares que están sonando esa conexión).
+  Future<Set<String>> getActiveDeviceAddresses() async {
+    final result =
+        await _channel.invokeListMethod<String>('getActiveSessions');
+    return (result ?? const []).toSet();
+  }
+
+  /// Pregunta al teléfono cuántas sesiones Bluetooth activas puede mantener
+  /// y si Bluetooth clásico (RFCOMM) está disponible.
+  Future<SyncCapacity> capacity() async {
+    final result =
+        await _channel.invokeMapMethod<String, Object?>('getCapacity');
+    if (result == null) {
+      return const SyncCapacity(supported: false, maxConcurrent: 0);
+    }
+    return SyncCapacity(
+      supported: result['supported'] as bool? ?? false,
+      maxConcurrent: result['maxConcurrent'] as int? ?? 0,
+      reason: result['reason'] as String?,
+    );
+  }
+
   Future<void> connectToDevice(String address) =>
       _channel.invokeMethod('connectToDevice', {'address': address});
 
@@ -140,6 +202,26 @@ class BluetoothSyncService {
     int? durationMs,
   }) {
     return _channel.invokeMethod('sendSongFile', {
+      'path': path,
+      'title': title,
+      'artist': artist,
+      'durationMs': durationMs,
+    });
+  }
+
+  /// Le manda el archivo a un solo invitado — para alguien que se conecta
+  /// después de que ya se mandó la canción al resto (p. ej. tras "Empezar
+  /// con los que ya están"), sin reenviárselo de nuevo a los que ya lo
+  /// tienen.
+  Future<void> sendSongFileTo({
+    required String address,
+    required String path,
+    required String title,
+    String? artist,
+    int? durationMs,
+  }) {
+    return _channel.invokeMethod('sendSongFileTo', {
+      'address': address,
       'path': path,
       'title': title,
       'artist': artist,

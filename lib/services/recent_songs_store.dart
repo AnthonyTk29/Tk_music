@@ -12,13 +12,16 @@ class RecentSongsStore {
   Future<List<int>> getRecentIds() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(_key) ?? const [];
-    return raw.map(int.parse).toList();
+    // tryParse: una entrada corrupta se descarta en vez de tirar abajo
+    // toda la lista de accesos directos.
+    return raw.map(int.tryParse).whereType<int>().toList();
   }
 
   Future<void> recordPlayed(int songId) async {
     final prefs = await SharedPreferences.getInstance();
     final current = (prefs.getStringList(_key) ?? const [])
-        .map(int.parse)
+        .map(int.tryParse)
+        .whereType<int>()
         .toList();
 
     // Se saca si ya estaba, para que vuelva a quedar primero sin duplicarse.

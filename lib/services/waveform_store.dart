@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:tk_music/core/errors/safe_json.dart';
+
 import 'active_profile.dart';
 
 /// Forma de onda (picos de amplitud normalizados 0.0-1.0) de una canción,
@@ -104,12 +106,15 @@ class WaveformStore {
   Future<Map<int, List<double>>> _readCache() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_key);
-    if (raw == null) return {};
-    final decoded = jsonDecode(raw) as Map<String, dynamic>;
-    return decoded.map((k, v) => MapEntry(
-          int.parse(k),
-          (v as List<dynamic>).map((e) => (e as num).toDouble()).toList(),
-        ));
+    return readJson(
+      raw,
+      (decoded) => (decoded as Map<String, dynamic>).map((k, v) => MapEntry(
+            int.parse(k),
+            (v as List<dynamic>).map((e) => (e as num).toDouble()).toList(),
+          )),
+      fallback: const {},
+      context: 'WaveformStore._readCache',
+    );
   }
 
   Future<void> _writeCache(Map<int, List<double>> cache) async {

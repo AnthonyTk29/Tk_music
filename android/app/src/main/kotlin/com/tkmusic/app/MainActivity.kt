@@ -343,7 +343,17 @@ class MainActivity : AudioServiceFragmentActivity() {
                     result.error("INSERT_FAILED", "No se pudo crear el destino en Download", null)
                     return
                 }
-                val input = contentResolver.openInputStream(sourceUri)
+                val input = try {
+                    contentResolver.openInputStream(sourceUri)
+                } catch (e: Exception) {
+                    // En Android 11+ puede pasar que WhatsApp guarde el audio
+                    // en una tarjeta SD (volumen secundario) o en una ruta
+                    // que EXTERNAL_CONTENT_URI no cubre: el append de ID
+                    // no resuelve y acá tira SecurityException/FileNotFound.
+                    contentResolver.delete(destUri, null, null)
+                    result.error("SOURCE_UNREADABLE", e.message ?: "No se pudo leer el origen", null)
+                    return
+                }
                 if (input == null) {
                     contentResolver.delete(destUri, null, null)
                     result.error("SOURCE_NOT_FOUND", "No se pudo abrir el archivo de origen", null)
@@ -367,7 +377,12 @@ class MainActivity : AudioServiceFragmentActivity() {
                     Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                 if (!downloadsDir.exists()) downloadsDir.mkdirs()
                 val destFile = File(downloadsDir, fileName)
-                val input = contentResolver.openInputStream(sourceUri)
+                val input = try {
+                    contentResolver.openInputStream(sourceUri)
+                } catch (e: Exception) {
+                    result.error("SOURCE_UNREADABLE", e.message ?: "No se pudo leer el origen", null)
+                    return
+                }
                 if (input == null) {
                     result.error("SOURCE_NOT_FOUND", "No se pudo abrir el archivo de origen", null)
                     return

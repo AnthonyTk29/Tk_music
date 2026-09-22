@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -26,6 +28,9 @@ class _PartySyncScreenState extends State<PartySyncScreen> {
   final _engine = PartySyncEngine();
   _Step _step = _Step.chooseRole;
   List<PairedBluetoothDevice>? _devices;
+  SyncCapacity? _capacity;
+  final Set<String> _activeAddresses = {};
+  StreamSubscription<BluetoothSyncEvent>? _aclSub;
   final List<PairedBluetoothDevice> _selectedGuestDevices = [];
   PairedBluetoothDevice? _selectedHostDevice;
   Song? _selectedSong;
@@ -39,6 +44,7 @@ class _PartySyncScreenState extends State<PartySyncScreen> {
 
   @override
   void dispose() {
+    _aclSub?.cancel();
     _engine.dispose();
     super.dispose();
   }
@@ -51,9 +57,27 @@ class _PartySyncScreenState extends State<PartySyncScreen> {
       return;
     }
     final devices = await BluetoothSyncService().getPairedDevices();
+    final capacity = await BluetoothSyncService().capacity();
+    final active = await BluetoothSyncService().getActiveDeviceAddresses();
+    // Actualiza en vivo qué dispositivos tienen sesión Bluetooth activa
+    // (se conectan/desconectan mientras mirás la lista).
+    _aclSub ??= BluetoothSyncService().events.listen((event) {
+      if (event is! DeviceConnectionChangedEvent || !mounted) return;
+      setState(() {
+        if (event.connected) {
+          _activeAddresses.add(event.address);
+        } else {
+          _activeAddresses.remove(event.address);
+        }
+      });
+    });
     if (!mounted) return;
     setState(() {
       _devices = devices;
+      _capacity = capacity;
+      _activeAddresses
+        ..clear()
+        ..addAll(active);
       _permissionError = null;
     });
   }
@@ -81,6 +105,8 @@ class _PartySyncScreenState extends State<PartySyncScreen> {
               ),
             _Step.hostSetup => _HostSetup(
                 devices: _devices,
+                capacity: _capacity,
+                activeAddresses: _activeAddresses,
                 permissionError: _permissionError,
                 selectedDevices: _selectedGuestDevices,
                 selectedSong: _selectedSong,
@@ -94,6 +120,8 @@ class _PartySyncScreenState extends State<PartySyncScreen> {
               ),
             _Step.guestSetup => _GuestSetup(
                 devices: _devices,
+                capacity: _capacity,
+                activeAddresses: _activeAddresses,
                 permissionError: _permissionError,
                 selectedDevice: _selectedHostDevice,
                 onDeviceChanged: (d) => setState(() => _selectedHostDevice = d),
@@ -218,9 +246,74 @@ class _DevicePicker extends StatelessWidget {
   }
 }
 
+/// Muestra el resultado de la validación de capacidad Bluetooth antes de
+/// armar la sesión: avisa si el dispositivo no puede sostener la cantidad de
+/// conexiones activas que pide esta función (o si solo trae Bluetooth LE,
+/// que no soporta RFCOMM), o informa el límite cuando sí puede.
+class _CapacityNotice extends StatelessWidget {
+  const _CapacityNotice({required this.capacity, required this.guestMode});
+
+  final SyncCapacity? capacity;
+  final bool guestMode;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cap = capacity;
+    if (cap == null) return const SizedBox.shrink();
+
+    if (!cap.supported) {
+      final message = switch (cap.reason) {
+        'le_only' => 'Este dispositivo tiene Bluetooth solo de bajo consumo '
+            '(LE) y no soporta el modo clásico que usa la sincronización. '
+            'No puede participar.',
+        'no_bluetooth' => 'Este dispositivo no tiene Bluetooth.',
+        _ => 'No se pudo verificar la capacidad Bluetooth de este '
+            'dispositivo.',
+      };
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline, size: 18, color: Colors.red),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.error),
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (guestMode) {
+      return Text(
+        'Bluetooth clásico disponible (este teléfono va a mantener una sola '
+        'conexión con el anfitrión).',
+        style: theme.textTheme.bodySmall
+            ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+      );
+    }
+
+    final maxHost = cap.maxConcurrent == 0
+        ? PartySyncEngine.maxGuests
+        : cap.maxConcurrent.clamp(1, PartySyncEngine.maxGuests);
+    return Text(
+      'Bluetooth clásico disponible: este teléfono puede sostener hasta '
+      '$maxHost sesiones activas a la vez. La sincronización necesita una '
+      'sesión por invitado (máximo ${PartySyncEngine.maxGuests}).',
+      style: theme.textTheme.bodySmall
+          ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+    );
+  }
+}
+
 class _HostSetup extends StatelessWidget {
   const _HostSetup({
     required this.devices,
+    required this.capacity,
+    required this.activeAddresses,
     required this.permissionError,
     required this.selectedDevices,
     required this.selectedSong,
@@ -230,6 +323,8 @@ class _HostSetup extends StatelessWidget {
   });
 
   final List<PairedBluetoothDevice>? devices;
+  final SyncCapacity? capacity;
+  final Set<String> activeAddresses;
   final String? permissionError;
   final List<PairedBluetoothDevice> selectedDevices;
   final Song? selectedSong;
@@ -240,11 +335,13 @@ class _HostSetup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _CapacityNotice(capacity: capacity, guestMode: false),
+          const SizedBox(height: 12),
           Text(
             '1. Elegí hasta ${PartySyncEngine.maxGuests} invitados',
             style: theme.textTheme.titleMedium,
@@ -252,6 +349,8 @@ class _HostSetup extends StatelessWidget {
           const SizedBox(height: 8),
           _MultiDevicePicker(
             devices: devices,
+            capacity: capacity,
+            activeAddresses: activeAddresses,
             permissionError: permissionError,
             selectedDevices: selectedDevices,
             onChanged: onDevicesChanged,
@@ -291,12 +390,16 @@ class _HostSetup extends StatelessWidget {
 class _MultiDevicePicker extends StatelessWidget {
   const _MultiDevicePicker({
     required this.devices,
+    required this.capacity,
+    required this.activeAddresses,
     required this.permissionError,
     required this.selectedDevices,
     required this.onChanged,
   });
 
   final List<PairedBluetoothDevice>? devices;
+  final SyncCapacity? capacity;
+  final Set<String> activeAddresses;
   final String? permissionError;
   final List<PairedBluetoothDevice> selectedDevices;
   final ValueChanged<List<PairedBluetoothDevice>> onChanged;
@@ -312,12 +415,24 @@ class _MultiDevicePicker extends StatelessWidget {
     if (devices == null) {
       return const LinearProgressIndicator();
     }
+    if (capacity != null && !capacity!.supported) {
+      // Sin Bluetooth clásico no se puede ni montar la sesión: se corta la
+      // selección antes de que el usuario arme una lista que nunca va a
+      // poder conectar.
+      return const SizedBox.shrink();
+    }
     if (devices!.isEmpty) {
       return const Text(
         'No tenés ningún dispositivo Bluetooth emparejado. Emparejá los '
         'teléfonos desde los ajustes de Android primero.',
       );
     }
+    // La capacidad medida limita cuántos invitados se pueden elegir: nunca
+    // más que lo que soporta el estándar del dispositivo, y nunca más que
+    // los que permite el motor de sincronización.
+    final cap = capacity?.maxConcurrent ?? PartySyncEngine.maxGuests;
+    final maxSelectable =
+        cap <= 0 ? 0 : cap.clamp(1, PartySyncEngine.maxGuests).toInt();
     return Column(
       children: [
         for (final device in devices!)
@@ -328,7 +443,7 @@ class _MultiDevicePicker extends StatelessWidget {
             onChanged: (checked) {
               final next = [...selectedDevices];
               if (checked ?? false) {
-                if (next.length >= PartySyncEngine.maxGuests) return;
+                if (next.length >= maxSelectable) return;
                 next.add(device);
               } else {
                 next.removeWhere((d) => d.address == device.address);
@@ -344,6 +459,8 @@ class _MultiDevicePicker extends StatelessWidget {
 class _GuestSetup extends StatelessWidget {
   const _GuestSetup({
     required this.devices,
+    required this.capacity,
+    required this.activeAddresses,
     required this.permissionError,
     required this.selectedDevice,
     required this.onDeviceChanged,
@@ -351,6 +468,8 @@ class _GuestSetup extends StatelessWidget {
   });
 
   final List<PairedBluetoothDevice>? devices;
+  final SyncCapacity? capacity;
+  final Set<String> activeAddresses;
   final String? permissionError;
   final PairedBluetoothDevice? selectedDevice;
   final ValueChanged<PairedBluetoothDevice?> onDeviceChanged;
@@ -358,13 +477,16 @@ class _GuestSetup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    final theme = Theme.of(context);
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          _CapacityNotice(capacity: capacity, guestMode: true),
+          const SizedBox(height: 12),
           Text('Elegí el teléfono anfitrión',
-              style: Theme.of(context).textTheme.titleMedium),
+              style: theme.textTheme.titleMedium),
           const SizedBox(height: 8),
           _DevicePicker(
             devices: devices,
@@ -374,7 +496,10 @@ class _GuestSetup extends StatelessWidget {
           ),
           const SizedBox(height: 24),
           FilledButton.icon(
-            onPressed: selectedDevice == null ? null : onJoin,
+            onPressed: selectedDevice == null ||
+                    (capacity != null && !capacity!.supported)
+                ? null
+                : onJoin,
             icon: const Icon(Icons.bluetooth_connected),
             label: const Text('Conectarme'),
           ),
@@ -395,80 +520,83 @@ class _SessionView extends StatelessWidget {
     final theme = Theme.of(context);
     final status = engine.status;
 
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            status == PartySyncStatus.playing
-                ? Icons.graphic_eq
-                : Icons.bluetooth_searching,
-            size: 48,
-            color: theme.colorScheme.primary,
-          ),
-          const SizedBox(height: 16),
-          if (engine.currentTitle != null) ...[
-            Text(engine.currentTitle!,
-                textAlign: TextAlign.center, style: theme.textTheme.titleLarge),
-            if (engine.currentArtist != null)
-              Text(engine.currentArtist!,
-                  textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
-            const SizedBox(height: 16),
-          ],
-          Text(
-            engine.statusMessage ?? _labelFor(status),
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium,
-          ),
-          if (status == PartySyncStatus.transferringFile) ...[
-            const SizedBox(height: 16),
-            LinearProgressIndicator(value: engine.transferProgress),
-          ],
-          if (engine.isHost && engine.guests.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _GuestsList(guests: engine.guests),
-          ],
-          if (engine.isHost && status == PartySyncStatus.waitingConnection) ...[
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: engine.guests.isEmpty
-                  ? null
-                  : engine.startWithConnectedGuestsNow,
-              icon: const Icon(Icons.fast_forward),
-              label: const Text('Empezar con los que ya están'),
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(
+              status == PartySyncStatus.playing
+                  ? Icons.graphic_eq
+                  : Icons.bluetooth_searching,
+              size: 48,
+              color: theme.colorScheme.primary,
             ),
-          ],
-          const SizedBox(height: 24),
-          if (status == PartySyncStatus.playing ||
-              status == PartySyncStatus.paused)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (engine.isHost) ...[
-                  IconButton.filled(
-                    iconSize: 40,
-                    onPressed: engine.togglePlayPause,
-                    icon: Icon(status == PartySyncStatus.playing
-                        ? Icons.pause
-                        : Icons.play_arrow),
+            const SizedBox(height: 16),
+            if (engine.currentTitle != null) ...[
+              Text(engine.currentTitle!,
+                  textAlign: TextAlign.center, style: theme.textTheme.titleLarge),
+              if (engine.currentArtist != null)
+                Text(engine.currentArtist!,
+                    textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
+              const SizedBox(height: 16),
+            ],
+            Text(
+              engine.statusMessage ?? _labelFor(status),
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium,
+            ),
+            if (status == PartySyncStatus.transferringFile) ...[
+              const SizedBox(height: 16),
+              LinearProgressIndicator(value: engine.transferProgress),
+            ],
+            if (engine.isHost && engine.guests.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _GuestsList(guests: engine.guests),
+            ],
+            if (engine.isHost && status == PartySyncStatus.waitingConnection) ...[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: engine.guests.isEmpty
+                    ? null
+                    : engine.startWithConnectedGuestsNow,
+                icon: const Icon(Icons.fast_forward),
+                label: const Text('Empezar con los que ya están'),
+              ),
+            ],
+            const SizedBox(height: 24),
+            if (status == PartySyncStatus.playing ||
+                status == PartySyncStatus.paused)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (engine.isHost) ...[
+                    IconButton.filled(
+                      iconSize: 40,
+                      onPressed: engine.togglePlayPause,
+                      icon: Icon(status == PartySyncStatus.playing
+                          ? Icons.pause
+                          : Icons.play_arrow),
+                    ),
+                    const SizedBox(width: 20),
+                  ],
+                  IconButton.filledTonal(
+                    iconSize: 32,
+                    onPressed: onExit,
+                    icon: const Icon(Icons.stop),
                   ),
-                  const SizedBox(width: 20),
                 ],
-                IconButton.filledTonal(
-                  iconSize: 32,
-                  onPressed: onExit,
-                  icon: const Icon(Icons.stop),
-                ),
-              ],
-            )
-          else
-            OutlinedButton.icon(
-              onPressed: onExit,
-              icon: const Icon(Icons.close),
-              label: const Text('Cancelar'),
-            ),
-        ],
+              )
+            else
+              OutlinedButton.icon(
+                onPressed: onExit,
+                icon: const Icon(Icons.close),
+                label: const Text('Cancelar'),
+              ),
+          ],
+        ),
       ),
     );
   }

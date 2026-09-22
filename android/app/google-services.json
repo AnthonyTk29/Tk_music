@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "597665001662",
+    "project_id": "tonymusiclist",
+    "storage_bucket": "tonymusiclist.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:597665001662:android:4cc70207d4a6bda0b06eef",
+        "android_client_info": {
+          "package_name": "com.tkmusic.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDm1k2kSvvX2MQ6Nm-GBl58BAmb6vrypOU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

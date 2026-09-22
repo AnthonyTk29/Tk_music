@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
+import 'package:tk_music/core/errors/app_error_code.dart';
+import 'package:tk_music/core/errors/app_exception.dart';
 import 'package:tk_music/domain/entities/song.dart';
 
 import 'bluetooth_sync_bridge.dart';
@@ -88,6 +90,21 @@ class PartySyncEngine extends ChangeNotifier {
   int get connectedGuestCount =>
       _guests.values.where((g) => g.connected).length;
 
+  /// Difunde un mensaje de control solo si hay a quién mandárselo. Cuando no
+  /// quedan conexiones activas (todos los invitados se desconectaron, o el
+  /// invitado todavía no terminó de conectarse), el puente nativo responde
+  /// NOT_CONNECTED; interceptarlo acá evita que ese caso esperado llegue a
+  /// Crashlytics como si fuera un crash.
+  Future<void> _broadcastControl(Map<String, dynamic> payload) async {
+    if (isHost && _guests.isEmpty) return;
+    try {
+      await _bridge.sendControl(payload);
+    } catch (e) {
+      debugPrint(
+          'Control "${payload['type']}" omitido sin conexiones activas: $e');
+    }
+  }
+
   Future<void> startAsHost(List<PairedBluetoothDevice> expectedGuests, Song song) async {
     _role = PartyRole.host;
     _pendingSong = song;
@@ -99,7 +116,23 @@ class PartySyncEngine extends ChangeNotifier {
     notifyListeners();
 
     _listen();
-    await _bridge.startHosting();
+    try {
+      await _bridge.startHosting();
+    } catch (e) {
+      // Todavía no hay ninguna sesión que mostrar (la pantalla sigue en el
+      // paso de configuración) — no tiene sentido dejarla mostrando
+      // "esperando invitados" para siempre, así que se vuelve a idle antes
+      // de que la excepción suba sola hasta la alerta global.
+      status = PartySyncStatus.idle;
+      notifyListeners();
+      throw AppException(
+        AppErrorCode.btHostFailed,
+        userMessage: 'No se pudo iniciar la sesión como anfitrión. Revisá '
+            'que el Bluetooth esté activado y que le hayas dado el permiso '
+            'a la app.',
+        technicalMessage: 'startHosting: $e',
+      );
+    }
   }
 
   Future<void> joinAsGuest(PairedBluetoothDevice hostDevice) async {
@@ -109,7 +142,18 @@ class PartySyncEngine extends ChangeNotifier {
     notifyListeners();
 
     _listen();
-    await _bridge.connectToDevice(hostDevice.address);
+    try {
+      await _bridge.connectToDevice(hostDevice.address);
+    } catch (e) {
+      status = PartySyncStatus.idle;
+      notifyListeners();
+      throw AppException(
+        AppErrorCode.btConnectFailed,
+        userMessage: 'No se pudo conectar con "${hostDevice.name}". '
+            'Verificá que el anfitrión ya haya iniciado la sesión.',
+        technicalMessage: 'connectToDevice: $e',
+      );
+    }
   }
 
   /// El anfitrión puede arrancar antes de que se conecten todos los
@@ -135,6 +179,11 @@ class PartySyncEngine extends ChangeNotifier {
           notifyListeners();
           if (!_songSent && connectedGuestCount >= _expectedGuestCount) {
             unawaited(_sendPendingSong());
+          } else if (_songSent) {
+            // Se conectó después de que ya se mandó la canción al resto
+            // (p. ej. tras "Empezar con los que ya están") — se le manda
+            // solo a él en vez de dejarlo esperando para siempre.
+            unawaited(_sendSongTo(address));
           }
         } else {
           status = PartySyncStatus.connected;
@@ -166,6 +215,10 @@ class PartySyncEngine extends ChangeNotifier {
         status = PartySyncStatus.error;
         statusMessage = message;
         notifyListeners();
+      case DeviceConnectionChangedEvent():
+        // Solo la pantalla de configuración lo usa para marcar qué
+        // dispositivos tienen sesión activa; el motor no necesita hacer nada.
+        break;
       case SendProgressEvent(:final sent, :final total, :final address):
         status = PartySyncStatus.transferringFile;
         _sendProgressByGuest[address] = total == 0 ? 0 : sent / total;
@@ -204,12 +257,24 @@ class PartySyncEngine extends ChangeNotifier {
     statusMessage = 'Enviando la canción a $connectedGuestCount invitado(s)...';
     notifyListeners();
 
-    await _bridge.sendSongFile(
-      path: song.filePath,
-      title: song.title,
-      artist: song.artist,
-      durationMs: song.duration?.inMilliseconds,
-    );
+    try {
+      await _bridge.sendSongFile(
+        path: song.filePath,
+        title: song.title,
+        artist: song.artist,
+        durationMs: song.duration?.inMilliseconds,
+      );
+    } catch (e) {
+      // Sin invitados conectados al momento de mandar (se desconectaron en
+      // el tramo entre chequear y enviar): se pasa a estado de error en vez
+      // de dejar la excepción sin capturar.
+      debugPrint('sendSongFile falló: $e');
+      if (_disposed) return;
+      status = PartySyncStatus.error;
+      statusMessage = 'Se desconectó antes de poder enviar la canción';
+      notifyListeners();
+      return;
+    }
     if (_disposed) return;
 
     // El anfitrión ya tiene el archivo local, no necesita recibirlo de
@@ -223,6 +288,29 @@ class PartySyncEngine extends ChangeNotifier {
     // "ready_to_start".
   }
 
+  /// Invitado tardío: se conectó después de que [_sendPendingSong] ya le
+  /// mandó el archivo a los demás. Se le manda solo a él — reenviar con
+  /// [_sendPendingSong] de nuevo interrumpiría a los que ya están
+  /// sincronizando el reloj o reproduciendo.
+  Future<void> _sendSongTo(String address) async {
+    final song = _pendingSong;
+    if (song == null) return;
+    try {
+      await _bridge.sendSongFileTo(
+        address: address,
+        path: song.filePath,
+        title: song.title,
+        artist: song.artist,
+        durationMs: song.duration?.inMilliseconds,
+      );
+    } catch (e) {
+      // Se desconectó entre que se conectó y que se le pudo mandar el
+      // archivo — el DisconnectedEvent natural ya se encarga de sacarlo de
+      // _guests, no hace falta nada más acá.
+      debugPrint('sendSongFileTo($address) falló: $e');
+    }
+  }
+
   // ---- Sincronización de reloj (protocolo NTP simplificado) ----
   // La inicia cada INVITADO porque es quien necesita calcular el offset
   // respecto al reloj del anfitrión.
@@ -232,7 +320,7 @@ class PartySyncEngine extends ChangeNotifier {
     for (var i = 0; i < 5; i++) {
       if (_disposed) return;
       final t0 = DateTime.now().millisecondsSinceEpoch;
-      await _bridge.sendControl({'type': 'clock_ping', 't0': t0});
+      await _broadcastControl({'type': 'clock_ping', 't0': t0});
       await Future.delayed(const Duration(milliseconds: 150));
     }
   }
@@ -245,12 +333,18 @@ class PartySyncEngine extends ChangeNotifier {
         // difundida (cada uno tiene su propio t0).
         final t0 = payload['t0'] as int;
         final t1 = DateTime.now().millisecondsSinceEpoch;
-        await _bridge.sendControlTo(fromAddress, {
-          'type': 'clock_pong',
-          't0': t0,
-          't1': t1,
-          't2': DateTime.now().millisecondsSinceEpoch,
-        });
+        try {
+          await _bridge.sendControlTo(fromAddress, {
+            'type': 'clock_pong',
+            't0': t0,
+            't1': t1,
+            't2': DateTime.now().millisecondsSinceEpoch,
+          });
+        } catch (e) {
+          // Ese invitado se desconectó entre su ping y esta respuesta: el
+          // pong ya no tiene a quién irle, no es un error de la sesión.
+          debugPrint('clock_pong omitido para $fromAddress: $e');
+        }
       case 'clock_pong':
         // Le llega al invitado (el anfitrión nunca manda clock_ping).
         final t0 = payload['t0'] as int;
@@ -263,7 +357,7 @@ class PartySyncEngine extends ChangeNotifier {
           _offsetSamples.sort();
           final median = _offsetSamples[_offsetSamples.length ~/ 2];
           _clockOffset = Duration(milliseconds: median);
-          await _bridge.sendControl({'type': 'ready_to_start'});
+          await _broadcastControl({'type': 'ready_to_start'});
           status = PartySyncStatus.waitingStart;
           statusMessage = 'Esperando que arranque la música...';
           notifyListeners();
@@ -301,7 +395,7 @@ class PartySyncEngine extends ChangeNotifier {
 
   Future<void> _scheduleStart() async {
     final hostStartAt = DateTime.now().millisecondsSinceEpoch + 3000;
-    await _bridge.sendControl({
+    await _broadcastControl({
       'type': 'play_at',
       'hostTimestamp': hostStartAt,
       'positionMs': 0,
@@ -337,7 +431,7 @@ class PartySyncEngine extends ChangeNotifier {
     _driftTimer?.cancel();
     _driftTimer = Timer.periodic(_driftCheckInterval, (_) async {
       if (!_player.playing) return;
-      await _bridge.sendControl({
+      await _broadcastControl({
         'type': 'position_sync',
         'hostTimestamp': DateTime.now().millisecondsSinceEpoch,
         'positionMs': _player.position.inMilliseconds,
@@ -402,12 +496,12 @@ class PartySyncEngine extends ChangeNotifier {
       _driftTimer?.cancel();
       _speedResetTimer?.cancel();
       await _player.pause();
-      await _bridge.sendControl({'type': 'pause'});
+      await _broadcastControl({'type': 'pause'});
       status = PartySyncStatus.paused;
     } else {
       final hostTimestamp = DateTime.now().millisecondsSinceEpoch + 500;
       final positionMs = _player.position.inMilliseconds;
-      await _bridge.sendControl({
+      await _broadcastControl({
         'type': 'resume',
         'hostTimestamp': hostTimestamp,
         'positionMs': positionMs,
@@ -423,9 +517,13 @@ class PartySyncEngine extends ChangeNotifier {
     _speedResetTimer?.cancel();
     await _player.stop();
     if (_role == PartyRole.host) {
-      await _bridge.sendControl({'type': 'stop_session'});
+      await _broadcastControl({'type': 'stop_session'});
     }
-    await _bridge.disconnect();
+    try {
+      await _bridge.disconnect();
+    } catch (e) {
+      debugPrint('disconnect falló: $e');
+    }
     status = PartySyncStatus.idle;
     statusMessage = null;
     _guests.clear();
