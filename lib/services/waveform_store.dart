@@ -94,7 +94,7 @@ class WaveformStore {
           'mediaStoreId': mediaStoreId,
           'positionFraction': positionFraction,
         },
-      );
+      ).timeout(const Duration(seconds: 90));
       return result?.map((v) => (v as num).toDouble()).toList();
     } catch (_) {
       return null;
@@ -112,7 +112,7 @@ class WaveformStore {
             int.parse(k),
             (v as List<dynamic>).map((e) => (e as num).toDouble()).toList(),
           )),
-      fallback: const {},
+      fallback: <int, List<double>>{},
       context: 'WaveformStore._readCache',
     );
   }

@@ -11,6 +11,13 @@ add_executable(${BINARY_NAME} WIN32
   "main.cpp"
   "utils.cpp"
   "win32_window.cpp"
+  "bluetooth_sync_plugin.cpp"
+  "audio_analysis_plugin.cpp"
+  "desktop_media_plugin.cpp"
+  "media_controls_plugin.cpp"
+  "loopback_recorder_plugin.cpp"
+  "midi_plugin.cpp"
+  "ui_task_runner.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
   "Runner.rc"
   "runner.exe.manifest"
@@ -34,6 +41,21 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
+# Para bluetooth_sync_plugin.cpp ("Sincronizar con otro dispositivo"): sockets
+# Winsock (Ws2_32) y las APIs de Bluetooth clásico de Windows (Bthprops).
+target_link_libraries(${BINARY_NAME} PRIVATE "Ws2_32.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "Bthprops.lib")
+# audio_analysis_plugin.cpp: decodificación de audio con Media Foundation.
+target_link_libraries(${BINARY_NAME} PRIVATE "mfplat.lib" "mfreadwrite.lib" "mfuuid.lib")
+# desktop_media_plugin.cpp: tags (sistema de propiedades) y carátulas (Shell
+# + WIC para codificarlas a JPEG).
+target_link_libraries(${BINARY_NAME} PRIVATE "propsys.lib" "shell32.lib" "windowscodecs.lib" "ole32.lib")
+# media_controls_plugin.cpp: controles multimedia del sistema (WinRT/SMTC).
+target_link_libraries(${BINARY_NAME} PRIVATE "runtimeobject.lib")
+# loopback_recorder_plugin.cpp: "Grabar mezcla" (captura loopback de WASAPI;
+# ole32 y shell32 ya están arriba).
+# midi_plugin.cpp: controladores DJ por MIDI (WinMM).
+target_link_libraries(${BINARY_NAME} PRIVATE "winmm.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.

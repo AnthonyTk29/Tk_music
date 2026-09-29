@@ -5,7 +5,8 @@ import 'package:tk_music/domain/entities/song.dart';
 /// allá del nombre, así que no hace falta modelarlas como entidades de
 /// dominio.
 class AlbumGroup {
-  const AlbumGroup({required this.name, required this.artist, required this.songs});
+  const AlbumGroup(
+      {required this.name, required this.artist, required this.songs});
 
   final String name;
   final String? artist;

@@ -1,11 +1,13 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 
+import 'package:tk_music/presentation/widgets/app_header.dart';
+import 'package:tk_music/presentation/widgets/artwork_backdrop.dart';
 import 'package:tk_music/core/di/service_locator.dart';
 import 'package:tk_music/presentation/widgets/alphabet_index_bar.dart';
-import 'package:tk_music/presentation/widgets/song_artwork.dart';
-import 'package:tk_music/services/audio_handler.dart';
+import 'package:tk_music/presentation/widgets/media_artwork.dart';
 import 'package:tk_music/services/automix_engine.dart';
+import 'package:tk_music/services/queue_capable_handler.dart';
 
 /// Cola de reproducción actual, reordenable con arrastrar-y-soltar. Se abre
 /// desde "Reproduciendo"; si el Mezclador automático está sonando, muestra
@@ -17,14 +19,21 @@ class QueueScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('A continuación')),
+      appBar: AppBar(title: const AppHeaderTitle(section: 'A continuación')),
       body: AnimatedBuilder(
         animation: AutomixEngine.instance,
         builder: (context, _) {
           if (AutomixEngine.instance.status != AutomixStatus.idle) {
-            return _AutomixQueueList(engine: AutomixEngine.instance);
+            final current = AutomixEngine.instance.currentSong;
+            return ArtworkGradient(
+              songId: current?.mediaStoreId,
+              child: _AutomixQueueList(engine: AutomixEngine.instance),
+            );
           }
-          return const _NormalQueueList();
+          return ArtworkBackdrop(
+            mediaItems: sl<AudioHandler>().mediaItem,
+            child: const _NormalQueueList(),
+          );
         },
       ),
     );
@@ -49,7 +58,8 @@ class _NormalQueueListState extends State<_NormalQueueList> {
 
   @override
   Widget build(BuildContext context) {
-    final handler = sl<AudioHandler>() as MyAudioHandler;
+    final handler = sl<AudioHandler>();
+    final queueHandler = handler as QueueCapableHandler;
 
     return StreamBuilder<List<MediaItem>>(
       stream: handler.queue,
@@ -69,67 +79,69 @@ class _NormalQueueListState extends State<_NormalQueueList> {
               controller: _controller,
               listPadding: const EdgeInsets.fromLTRB(8, 8, 8, 116),
               child: ReorderableListView.builder(
-              scrollController: _controller,
-              padding: const EdgeInsets.fromLTRB(8, 8, 8, 116),
-              itemCount: items.length,
-              onReorder: (oldIndex, newIndex) {
-                if (newIndex > oldIndex) newIndex -= 1;
-                handler.moveQueueItem(oldIndex, newIndex);
-              },
-              itemBuilder: (context, index) {
-                final item = items[index];
-                final isCurrent = item.id == currentId;
-                final songId = item.extras?['songId'] as int?;
+                scrollController: _controller,
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 116),
+                itemCount: items.length,
+                onReorder: (oldIndex, newIndex) {
+                  if (newIndex > oldIndex) newIndex -= 1;
+                  queueHandler.moveQueueItem(oldIndex, newIndex);
+                },
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  final isCurrent = item.id == currentId;
 
-                return Dismissible(
-                  key: ValueKey('${item.id}_$index'),
-                  direction: DismissDirection.endToStart,
-                  background: Container(
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    child: Icon(Icons.delete_outline,
-                        color: Theme.of(context).colorScheme.onErrorContainer),
-                  ),
-                  onDismissed: (_) => handler.removeQueueItemAt(index),
-                  child: ListTile(
-                    tileColor: isCurrent
-                        ? Theme.of(context).colorScheme.surfaceContainerHighest
-                        : null,
-                    leading: songId != null
-                        ? ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: SongArtwork(songId: songId, size: 44),
-                          )
-                        : const Icon(Icons.music_note),
-                    title: Text(
-                      item.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight:
-                            isCurrent ? FontWeight.w700 : FontWeight.w500,
-                        color: isCurrent
-                            ? Theme.of(context).colorScheme.primary
-                            : null,
+                  return Dismissible(
+                    key: ValueKey('${item.id}_$index'),
+                    direction: DismissDirection.endToStart,
+                    background: Container(
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      color: Theme.of(context).colorScheme.errorContainer,
+                      child: Icon(Icons.delete_outline,
+                          color:
+                              Theme.of(context).colorScheme.onErrorContainer),
+                    ),
+                    onDismissed: (_) => handler.removeQueueItemAt(index),
+                    child: ListTile(
+                      tileColor: isCurrent
+                          ? Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest
+                          : null,
+                      leading: MediaArtwork.hasArtwork(item)
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: MediaArtwork(item: item, size: 44),
+                            )
+                          : const Icon(Icons.music_note),
+                      title: Text(
+                        item.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight:
+                              isCurrent ? FontWeight.w700 : FontWeight.w500,
+                          color: isCurrent
+                              ? Theme.of(context).colorScheme.primary
+                              : null,
+                        ),
                       ),
+                      subtitle: Text(
+                        item.artist ?? 'Desconocido',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: isCurrent
+                          ? Icon(Icons.graphic_eq,
+                              color: Theme.of(context).colorScheme.primary)
+                          : const Icon(Icons.drag_handle),
+                      onTap: () async {
+                        await handler.skipToQueueItem(index);
+                        await handler.play();
+                      },
                     ),
-                    subtitle: Text(
-                      item.artist ?? 'Desconocido',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: isCurrent
-                        ? Icon(Icons.equalizer,
-                            color: Theme.of(context).colorScheme.primary)
-                        : const Icon(Icons.drag_handle),
-                    onTap: () async {
-                      await handler.skipToQueueItem(index);
-                      await handler.play();
-                    },
-                  ),
-                );
-              },
+                  );
+                },
               ),
             );
           },
@@ -176,56 +188,59 @@ class _AutomixQueueListState extends State<_AutomixQueueList> {
       controller: _controller,
       listPadding: const EdgeInsets.fromLTRB(8, 8, 8, 116),
       child: ReorderableListView.builder(
-      scrollController: _controller,
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 116),
-      itemCount: upcoming.length + 1,
-      onReorder: (oldIndex, newIndex) {
-        // La posición 0 es la canción actual, no reordenable: se traduce
-        // a índices de [upcoming] (que arranca en 1 acá) antes de llamar.
-        if (oldIndex == 0) return;
-        var from = oldIndex - 1;
-        var to = newIndex - 1;
-        if (to > from) to -= 1;
-        engine.reorderUpcoming(from, to);
-      },
-      itemBuilder: (context, index) {
-        if (index == 0) {
-          return ListTile(
-            key: const ValueKey('automix_current'),
-            tileColor: theme.colorScheme.surfaceContainerHighest,
-            leading: const Icon(Icons.graphic_eq),
-            title: Text(
-              current.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                color: theme.colorScheme.primary,
+        scrollController: _controller,
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 116),
+        itemCount: upcoming.length + 1,
+        onReorder: (oldIndex, newIndex) {
+          // La posición 0 es la canción actual, no reordenable: se traduce
+          // a índices de [upcoming] (que arranca en 1 acá) antes de llamar.
+          if (oldIndex == 0) return;
+          var from = oldIndex - 1;
+          var to = newIndex - 1;
+          if (to > from) to -= 1;
+          engine.reorderUpcoming(from, to);
+        },
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return ListTile(
+              key: const ValueKey('automix_current'),
+              tileColor: theme.colorScheme.surfaceContainerHighest,
+              leading: const Icon(Icons.graphic_eq),
+              title: Text(
+                current.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: theme.colorScheme.primary,
+                ),
               ),
-            ),
-            subtitle: Text(
-              current.artist ?? 'Desconocido',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            trailing: Icon(Icons.equalizer, color: theme.colorScheme.primary),
-          );
-        }
+              subtitle: Text(
+                current.artist ?? 'Desconocido',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing:
+                  Icon(Icons.graphic_eq, color: theme.colorScheme.primary),
+            );
+          }
 
-        final song = upcoming[index - 1];
-        return ListTile(
-          key: ValueKey('${song.mediaStoreId}_$index'),
-          leading: CircleAvatar(
-            backgroundColor: theme.colorScheme.surfaceContainerHighest,
-            child: Text('$index'),
-          ),
-          title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: song.artist != null
-              ? Text(song.artist!, maxLines: 1, overflow: TextOverflow.ellipsis)
-              : null,
-          trailing: const Icon(Icons.drag_handle),
-        );
-      },
+          final song = upcoming[index - 1];
+          return ListTile(
+            key: ValueKey('${song.mediaStoreId}_$index'),
+            leading: CircleAvatar(
+              backgroundColor: theme.colorScheme.surfaceContainerHighest,
+              child: Text('$index'),
+            ),
+            title:
+                Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: song.artist != null
+                ? Text(song.artist!,
+                    maxLines: 1, overflow: TextOverflow.ellipsis)
+                : null,
+            trailing: const Icon(Icons.drag_handle),
+          );
+        },
       ),
     );
   }

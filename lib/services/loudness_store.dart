@@ -25,13 +25,18 @@ class LoudnessStore {
 
   String get _key => '${ActiveProfile.instance.key}.loudnessDb';
 
-  Future<double> dbFor(Song song) async {
+  Future<double> dbFor(Song song) =>
+      dbForFile(song.mediaStoreId, song.filePath);
+
+  /// Igual que [dbFor], a partir del id de la canción y su archivo (lo que
+  /// tiene a mano el reproductor en su cola).
+  Future<double> dbForFile(int songId, String path) async {
     final cache = await _readCache();
-    final cached = cache[song.mediaStoreId];
+    final cached = cache[songId];
     if (cached != null) return cached;
 
-    final db = await _analyze(song.filePath);
-    cache[song.mediaStoreId] = db;
+    final db = await _analyze(path);
+    cache[songId] = db;
     await _writeCache(cache);
     return db;
   }
@@ -43,8 +48,9 @@ class LoudnessStore {
       // deja al Mezclador automático esperando para siempre por un volumen
       // que puede llegar tarde — usa el neutro y sigue.
       final result = await _channel
-          .invokeMethod<double>('analyzeLoudness', {'path': path})
-          .timeout(const Duration(seconds: 8), onTimeout: () => null);
+          .invokeMethod<double>('analyzeLoudness', {'path': path}).timeout(
+              const Duration(seconds: 8),
+              onTimeout: () => null);
       return result ?? neutralDb;
     } catch (_) {
       return neutralDb;
@@ -58,7 +64,7 @@ class LoudnessStore {
       raw,
       (decoded) => (decoded as Map<String, dynamic>)
           .map((k, v) => MapEntry(int.parse(k), (v as num).toDouble())),
-      fallback: const {},
+      fallback: <int, double>{},
       context: 'LoudnessStore._readCache',
     );
   }

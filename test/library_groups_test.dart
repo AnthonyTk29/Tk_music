@@ -22,7 +22,8 @@ void main() {
       final groups = groupByAlbum(songs);
 
       expect(groups.length, 2);
-      expect(groups.firstWhere((g) => g.name == 'Greatest Hits').songs.length, 2);
+      expect(
+          groups.firstWhere((g) => g.name == 'Greatest Hits').songs.length, 2);
       expect(groups.firstWhere((g) => g.name == 'Thriller').songs.length, 1);
     });
 

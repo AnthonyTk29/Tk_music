@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 
@@ -30,6 +28,13 @@ class ErrorReporter {
 
   final navigatorKey = GlobalKey<NavigatorState>();
   bool _dialogShowing = false;
+
+  /// Lo prende main.dart solo si Firebase arrancó bien y la plataforma
+  /// tiene Crashlytics (Android). En desktop Crashlytics no existe: sin
+  /// este corte, cada error intentaba mandarse igual, ese intento fallaba
+  /// de forma asíncrona, y el fallo volvía a entrar acá por la zona global
+  /// — un bucle.
+  bool crashlyticsEnabled = false;
 
   /// Punto de entrada único para un error puntual y accionable — lo
   /// registra Y le muestra la pantalla de alerta a la persona. [error]
@@ -62,19 +67,16 @@ class ErrorReporter {
     final exception = _asException(error);
     debugPrint('${exception.code.name}: ${exception.technicalMessage}');
 
-    // try/catch propio: un reporter de errores que a su vez puede tirar
-    // una excepción (p. ej. Firebase todavía no se pudo inicializar) es
-    // el peor tipo de falla — silenciosa hasta que alguien se choca con
-    // ella más adelante.
+    if (!crashlyticsEnabled) return;
+    // Un reporter de errores que a su vez puede tirar una excepción es el
+    // peor tipo de falla: se atrapa tanto el fallo inmediato como el
+    // asíncrono, para que nunca vuelva a entrar al manejador global.
     try {
-      unawaited(
-        FirebaseCrashlytics.instance.recordError(
-          exception,
-          stackTrace,
-          reason: exception.code.name,
-          fatal: false,
-        ),
-      );
+      FirebaseCrashlytics.instance
+          .recordError(exception, stackTrace,
+              reason: exception.code.name, fatal: false)
+          .catchError((Object e) =>
+              debugPrint('No se pudo reportar a Crashlytics: $e'));
     } catch (e) {
       debugPrint('No se pudo reportar a Crashlytics: $e');
     }

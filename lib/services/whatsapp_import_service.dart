@@ -1,77 +1,87 @@
-import 'package:flutter/services.dart';
-
-import 'package:tk_music/core/errors/app_error_code.dart';
-import 'package:tk_music/core/errors/app_exception.dart';
+import 'package:tk_music/core/di/service_locator.dart';
 import 'package:tk_music/domain/entities/song.dart';
+import 'package:tk_music/domain/repositories/audio_import_repository.dart';
 
-/// Patrón de nombre que usa WhatsApp para notas de voz y audios reenviados
-/// (AUD-20260127-WA0014.mp3). Se reutiliza acá para poder "limpiar" el
-/// nombre al importar: si se copiara tal cual, [SongLocalDatasource] lo
-/// volvería a excluir de la biblioteca por matchear el mismo patrón, aunque
-/// ya no esté dentro de la carpeta de WhatsApp.
-final _whatsappAudioPattern = RegExp(r'AUD-\d{8}-WA\d+', caseSensitive: false);
+/// Nombre que WhatsApp les pone a los audios reenviados
+/// (AUD-20260927-WA0014) y a las notas de voz (PTT-20260927-WA0003).
+final whatsAppCodePattern =
+    RegExp(r'(AUD|PTT)-(\d{4})(\d{2})(\d{2})-WA(\d+)', caseSensitive: false);
+
+/// Si es una nota de voz (por el nombre del archivo).
+bool isWhatsAppVoiceNote(String name) =>
+    whatsAppCodePattern.firstMatch(name)?.group(1)?.toUpperCase() == 'PTT';
+
+/// Un nombre legible para un audio de WhatsApp: "PTT-20260927-WA0003" pasa
+/// a "Nota de voz 27-09-2026 (3)" y "AUD-…" a "Audio de WhatsApp …". Si el
+/// nombre tiene algo más además del código, queda eso.
+String friendlyWhatsAppTitle(String title) {
+  final match = whatsAppCodePattern.firstMatch(title);
+  if (match == null) return title;
+  final rest = title
+      .replaceAll(whatsAppCodePattern, '')
+      .replaceAll(RegExp(r'^[\s\-_.]+|[\s\-_.]+$'), '');
+  if (rest.isNotEmpty) return rest;
+  final kind = match.group(1)!.toUpperCase() == 'PTT'
+      ? 'Nota de voz'
+      : 'Audio de WhatsApp';
+  return '$kind ${match.group(4)}-${match.group(3)}-${match.group(2)} '
+      '(${int.parse(match.group(5)!)})';
+}
+
+/// La fecha que viene en el nombre de WhatsApp (AUD-20260927-…), si tiene.
+DateTime? whatsAppDate(String name) {
+  final match = whatsAppCodePattern.firstMatch(name);
+  if (match == null) return null;
+  return DateTime.tryParse(
+      '${match.group(2)}-${match.group(3)}-${match.group(4)}');
+}
 
 const _mimeByExtension = {
   'mp3': 'audio/mpeg',
   'm4a': 'audio/mp4',
   'aac': 'audio/aac',
-  'opus': 'audio/opus',
+  'opus': 'audio/ogg',
   'ogg': 'audio/ogg',
   'wav': 'audio/wav',
   'flac': 'audio/flac',
 };
 
-/// Copia un audio recibido por WhatsApp a la carpeta Download del teléfono
-/// para que MediaStore (y con eso, la biblioteca de la app) lo indexe como
-/// una canción normal. No mueve el original: WhatsApp podría necesitarlo, y
-/// borrar archivos de otra app requiere permisos que no vale la pena pedir
-/// para esto.
+/// Copia un audio recibido por WhatsApp (reenviado o nota de voz) a
+/// Música/TK Music/Audios de WhatsApp para que la biblioteca lo tome como
+/// una canción más. No mueve el original: WhatsApp podría necesitarlo.
 class WhatsAppImportService {
-  static const _channel = MethodChannel('tk_music/media_import');
+  WhatsAppImportService({AudioImportRepository? repository})
+      : _repository = repository ?? sl<AudioImportRepository>();
 
-  Future<void> importToDownloads(Song song) async {
+  final AudioImportRepository _repository;
+
+  /// Dónde quedan los importados (para mostrarlo).
+  static const destinationLabel = AudioImportRepository.whatsAppFolderLabel;
+
+  Future<void> importToLibrary(Song song) async {
     final extension = _extensionOf(song.filePath);
-    final fileName = _cleanFileName(song.title, extension);
-    final mimeType = _mimeByExtension[extension] ?? 'audio/*';
-
-    try {
-      await _channel.invokeMethod('importToDownloads', {
-        'mediaStoreId': song.mediaStoreId,
-        'fileName': fileName,
-        'mimeType': mimeType,
-      });
-    } on PlatformException catch (e) {
-      throw AppException(
-        AppErrorCode.storageImportFailed,
-        userMessage: '$fileName — ${_describePlatformError(e)}',
-        technicalMessage: 'importToDownloads(${e.code}): ${e.message}',
-      );
-    }
-  }
-
-  String _describePlatformError(PlatformException e) {
-    switch (e.code) {
-      case 'INSERT_FAILED':
-        return 'No se pudo crear el archivo de destino en Download';
-      case 'SOURCE_NOT_FOUND':
-        return 'No se pudo abrir el audio original en WhatsApp';
-      case 'SOURCE_UNREADABLE':
-        return 'Sin permiso para leer el audio original';
-      case 'OUTPUT_FAILED':
-        return 'No se pudo escribir en la carpeta Download';
-      default:
-        return e.message ?? e.code;
-    }
+    await _repository.importWhatsAppAudio(
+      song,
+      fileName: cleanFileName(song.title, extension),
+      mimeType: _mimeByExtension[extension] ?? 'audio/*',
+    );
   }
 
   String _extensionOf(String path) {
-    final dot = path.lastIndexOf('.');
-    return dot < 0 ? 'mp3' : path.substring(dot + 1).toLowerCase();
+    final name = path.split(RegExp(r'[/\\]')).last;
+    final decoded = Uri.decodeComponent(name);
+    final dot = decoded.lastIndexOf('.');
+    return dot < 0 ? 'mp3' : decoded.substring(dot + 1).toLowerCase();
   }
 
-  String _cleanFileName(String title, String extension) {
-    var name = title.replaceAll(_whatsappAudioPattern, '').trim();
-    name = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+  /// Nombre del archivo copiado: el nombre legible, sin caracteres que
+  /// Windows/Android no aceptan. Sin el código de WhatsApp, así la
+  /// biblioteca no lo vuelve a esconder.
+  static String cleanFileName(String title, String extension) {
+    var name = friendlyWhatsAppTitle(title)
+        .replaceAll(RegExp(r'\.[A-Za-z0-9]{2,4}$'), '')
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .trim();
     if (name.isEmpty) {
       name = 'Audio importado ${DateTime.now().millisecondsSinceEpoch}';
     }

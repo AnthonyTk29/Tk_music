@@ -42,13 +42,11 @@ class _SeekBarState extends State<SeekBar> {
             min: 0,
             max: totalMs > 0 ? totalMs : 1,
             value: totalMs > 0 ? value.clamp(0.0, totalMs) : 0,
-            onChanged: totalMs > 0
-                ? (v) => setState(() => _dragValue = v)
-                : null,
+            onChanged:
+                totalMs > 0 ? (v) => setState(() => _dragValue = v) : null,
             onChangeEnd: totalMs > 0
                 ? (v) {
-                    widget.onChangeEnd
-                        ?.call(Duration(milliseconds: v.round()));
+                    widget.onChangeEnd?.call(Duration(milliseconds: v.round()));
                     setState(() => _dragValue = null);
                   }
                 : null,

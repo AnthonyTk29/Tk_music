@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'package:tk_music/presentation/widgets/app_header.dart';
 import 'package:tk_music/presentation/widgets/app_logo.dart';
 
 /// Datos de la app y contacto del desarrollador.
@@ -15,7 +16,7 @@ class AboutScreen extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Acerca de')),
+      appBar: AppBar(title: const AppHeaderTitle(section: 'Acerca de')),
       body: ListView(
         padding: const EdgeInsets.all(24),
         children: [
@@ -63,7 +64,8 @@ class AboutScreen extends StatelessWidget {
     if (!launched && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No se pudo abrir el correo. Escribí a $_developerEmail'),
+          content:
+              Text('No se pudo abrir el correo. Escribí a $_developerEmail'),
         ),
       );
     }

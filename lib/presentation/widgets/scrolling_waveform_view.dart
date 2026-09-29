@@ -48,8 +48,8 @@ class _ScrollingWaveformViewState extends State<ScrollingWaveformView>
       duration: const Duration(milliseconds: 280),
     )..addListener(() {
         setState(() {
-          _displayedCenter = _fromCenter +
-              (_toCenter - _fromCenter) * _controller.value;
+          _displayedCenter =
+              _fromCenter + (_toCenter - _fromCenter) * _controller.value;
         });
       });
     _toCenter = _targetCenter();

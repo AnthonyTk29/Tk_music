@@ -35,7 +35,7 @@ class EqualizerStore {
       raw,
       (decoded) => (decoded as Map<String, dynamic>)
           .map((k, v) => MapEntry(int.parse(k), (v as num).toDouble())),
-      fallback: const {},
+      fallback: <int, double>{},
       context: 'EqualizerStore.getGains',
     );
   }

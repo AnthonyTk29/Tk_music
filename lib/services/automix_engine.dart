@@ -3,27 +3,32 @@ import 'dart:math';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
-import 'package:just_audio/just_audio.dart';
 
 import 'package:tk_music/core/di/service_locator.dart';
 import 'package:tk_music/domain/entities/song.dart';
 
-import 'audio_handler.dart';
+import 'app_audio_handler.dart';
+import 'basic_player.dart';
+import 'crossfade_coordinator.dart';
 import 'loudness_store.dart';
+import 'track_features.dart';
+import 'track_features_store.dart';
 import 'waveform_store.dart';
 
-enum AutomixStatus { idle, loading, playing, crossfading, finished }
+enum AutomixStatus { idle, analyzing, loading, playing, crossfading, finished }
 
 /// Motor del Mezclador automático: mantiene dos reproductores propios
-/// (necesita dos para el crossfade) en vez de usar MyAudioHandler
-/// directamente. El volumen de cada tema se normaliza según su dB medido
+/// (necesita dos para el crossfade) en vez de usar el reproductor principal
+/// directamente — just_audio en Android, media_kit en desktop, vía
+/// [BasicPlayer]. El volumen de cada tema se normaliza según su dB medido
 /// ([LoudnessStore]) para que el cruce no se sienta más fuerte ni más flojo
 /// de golpe.
 ///
 /// Aun así, mientras suena "toma prestada" la notificación del reproductor
-/// principal ([MyAudioHandler.takeExternalControl]) para que la
-/// reproducción sobreviva en segundo plano y se vea en la notificación,
-/// sin tener que duplicar todo el pipeline de audio_service acá.
+/// principal ([AppAudioHandler.takeExternalControl]) para que la
+/// reproducción sobreviva en segundo plano y se vea en la notificación (o
+/// en los controles multimedia de Windows), sin tener que duplicar todo el
+/// pipeline de audio_service acá.
 class AutomixEngine extends ChangeNotifier {
   AutomixEngine._();
 
@@ -32,8 +37,8 @@ class AutomixEngine extends ChangeNotifier {
   /// cortaría apenas volvés atrás a Biblioteca/Favoritos/etc.
   static final instance = AutomixEngine._();
 
-  final _playerA = AudioPlayer();
-  final _playerB = AudioPlayer();
+  final _playerA = BasicPlayer();
+  final _playerB = BasicPlayer();
   final _loudness = LoudnessStore();
   final _waveforms = WaveformStore();
 
@@ -44,8 +49,8 @@ class AutomixEngine extends ChangeNotifier {
   StreamSubscription<Duration>? _positionSub;
   DateTime? _lastReportedAt;
 
-  MyAudioHandler? get _handler =>
-      isAudioAvailable ? sl<AudioHandler>() as MyAudioHandler : null;
+  AppAudioHandler? get _handler =>
+      isAudioAvailable ? sl<AudioHandler>() as AppAudioHandler : null;
 
   /// Onda de la canción que está sonando ahora, para la vista estilo
   /// VirtualDJ. `null` mientras se está analizando (la primera vez; después
@@ -61,13 +66,21 @@ class AutomixEngine extends ChangeNotifier {
 
   AutomixStatus status = AutomixStatus.idle;
 
-  AudioPlayer get _active => _usingA ? _playerA : _playerB;
-  AudioPlayer get _standby => _usingA ? _playerB : _playerA;
+  /// Mientras se analiza el ritmo/tonalidad para el orden inteligente.
+  int analyzedCount = 0;
+  int analyzeTotal = 0;
+
+  final _features = TrackFeaturesStore.instance;
+
+  /// BPM/tonalidad ya analizados de [song] (null si todavía no).
+  TrackFeatures? featuresOf(Song song) => _features.cached(song.filePath);
+
+  BasicPlayer get _active => _usingA ? _playerA : _playerB;
+  BasicPlayer get _standby => _usingA ? _playerB : _playerA;
 
   Song? get currentSong =>
       _index >= 0 && _index < _queue.length ? _queue[_index] : null;
-  Song? get nextSong =>
-      _index + 1 < _queue.length ? _queue[_index + 1] : null;
+  Song? get nextSong => _index + 1 < _queue.length ? _queue[_index + 1] : null;
 
   /// Canciones después de la que está sonando, en orden. Reordenarla con
   /// [reorderUpcoming] cambia directamente cuál es la próxima en cruzar,
@@ -77,7 +90,7 @@ class AutomixEngine extends ChangeNotifier {
 
   /// [newIndex] ya viene ajustado por el llamador (convención de
   /// [ReorderableListView.onReorder]: si es mayor que [oldIndex], restarle
-  /// 1 antes de llamar acá), igual que [MyAudioHandler.moveQueueItem].
+  /// 1 antes de llamar acá), igual que [AppAudioHandler.moveQueueItem].
   void reorderUpcoming(int oldIndex, int newIndex) {
     final base = _index + 1;
     final from = base + oldIndex;
@@ -93,10 +106,39 @@ class AutomixEngine extends ChangeNotifier {
   bool get isPlaying => _active.playing;
   bool get isCrossfading => _crossfading;
 
-  Future<void> start(List<Song> queue) async {
+  /// [smartOrder]: antes de arrancar analiza ritmo y tonalidad de todas y
+  /// las ordena como un DJ (tempos y tonos que combinan, energía que sube de
+  /// a poco, arrancando por la más tranquila).
+  Future<void> start(List<Song> queue, {bool smartOrder = false}) async {
     _queue = queue;
     _index = 0;
     if (_queue.isEmpty) return;
+
+    if (smartOrder && _queue.length > 2) {
+      status = AutomixStatus.analyzing;
+      analyzedCount = 0;
+      analyzeTotal = _queue.length;
+      notifyListeners();
+      for (final song in _queue) {
+        await _features.featuresFor(song.filePath,
+            durationMs: song.duration?.inMilliseconds);
+        analyzedCount++;
+        notifyListeners();
+        if (status != AutomixStatus.analyzing) return; // se canceló
+      }
+      final known = [
+        for (final song in _queue)
+          if (featuresOf(song) != null) song
+      ];
+      if (known.isNotEmpty) {
+        known.sort(
+            (a, b) => featuresOf(a)!.energy.compareTo(featuresOf(b)!.energy));
+        _queue
+          ..remove(known.first)
+          ..insert(0, known.first);
+      }
+      _queue = orderForMixing(_queue, featuresOf);
+    }
 
     status = AutomixStatus.loading;
     notifyListeners();
@@ -115,17 +157,16 @@ class AutomixEngine extends ChangeNotifier {
       // mejor que suene ya a volumen normal y se ajuste solo al toque que
       // esperar con la pantalla de carga.
       await _active.setVolume(1.0);
-      // OJO: el Future de play() de just_audio no se resuelve cuando
-      // arranca a sonar, sino cuando la reproducción se DETIENE (pausa o
-      // termina) — awaitearlo acá dejaba toda esta función colgada hasta
-      // que la canción se acababa sola, con la pantalla pegada en "cargando"
-      // todo ese tiempo (aunque el audio sí sonara).
-      unawaited(_active.play());
+      // BasicPlayer.play() vuelve apenas arranca (en just_audio el Future
+      // de play() recién se resuelve al pausar/terminar; eso ya lo maneja
+      // BasicPlayer).
+      await _active.play();
 
       status = AutomixStatus.playing;
       _reportState();
       unawaited(_loadPeaksForCurrent());
       unawaited(_applyGainWhenReady(_queue[0], _active));
+      _prefetchFeatures();
     } catch (_) {
       // El primer archivo falló al cargar: no tiene sentido quedarse en la
       // pantalla de carga para siempre.
@@ -136,7 +177,7 @@ class AutomixEngine extends ChangeNotifier {
     }
   }
 
-  Future<void> _applyGainWhenReady(Song song, AudioPlayer player) async {
+  Future<void> _applyGainWhenReady(Song song, BasicPlayer player) async {
     final gain = await _gainFor(song);
     if (currentSong != song) return;
     await player.setVolume(gain);
@@ -203,8 +244,8 @@ class AutomixEngine extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _loadIntoPlayer(AudioPlayer player, Song song) {
-    return player.setAudioSource(AudioSource.uri(Uri.file(song.filePath)));
+  Future<void> _loadIntoPlayer(BasicPlayer player, Song song) {
+    return player.setFilePath(song.filePath);
   }
 
   Future<double> _gainFor(Song song) async {
@@ -222,7 +263,10 @@ class AutomixEngine extends ChangeNotifier {
       if (total == null) return;
       final remaining = total - position;
 
-      if (nextSong != null && remaining <= _crossfadeDuration) {
+      // Un poco antes de los 8s: si hay análisis de ritmo, el cruce espera
+      // al próximo pulso para arrancar justo en el golpe.
+      if (nextSong != null &&
+          remaining <= _crossfadeDuration + const Duration(milliseconds: 700)) {
         _crossfading = true;
         unawaited(_crossfadeToNext());
       } else if (nextSong == null && remaining <= Duration.zero) {
@@ -254,8 +298,33 @@ class AutomixEngine extends ChangeNotifier {
       final fromGain = await _gainFor(from);
       final toGain = await _gainFor(to);
 
+      // Cruce sobre el pulso: arranca en un golpe de la que termina, la que
+      // entra desde su primer golpe y a su mismo tempo (±8 %), volviendo de
+      // a poco a su velocidad normal después.
+      var speed = 1.0;
+      final fromFeatures = featuresOf(from);
+      final toFeatures = featuresOf(to);
+      final total = active.duration;
+      if (fromFeatures != null &&
+          toFeatures != null &&
+          fromFeatures.hasTempo &&
+          toFeatures.hasTempo &&
+          total != null) {
+        speed = speedToMatchTempo(fromFeatures, toFeatures);
+        await standby
+            .seek(Duration(milliseconds: firstBeatOf(toFeatures).round()));
+        final beatAt = fromFeatures.nextBeatAfter(
+            (total - _crossfadeDuration).inMilliseconds.toDouble());
+        final deadline = DateTime.now().add(const Duration(seconds: 2));
+        while (active.position.inMilliseconds < beatAt - 15 &&
+            DateTime.now().isBefore(deadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      }
+
       await standby.setVolume(0);
-      unawaited(standby.play()); // ver nota sobre play() en start()
+      await standby.setSpeed(speed);
+      await standby.play();
 
       status = AutomixStatus.crossfading;
       notifyListeners();
@@ -276,6 +345,8 @@ class AutomixEngine extends ChangeNotifier {
       status = AutomixStatus.playing;
       _reportState();
       unawaited(_loadPeaksForCurrent());
+      if (speed != 1.0) unawaited(_glideToNormalSpeed(standby, speed));
+      _prefetchFeatures();
     } catch (_) {
       // No se pudo cruzar a la siguiente (archivo problemático, etc.): se
       // queda en la que ya estaba sonando en vez de perder toda la sesión.
@@ -285,6 +356,25 @@ class AutomixEngine extends ChangeNotifier {
       _listenForCrossfade();
       notifyListeners();
     }
+  }
+
+  /// Vuelve de a poco a la velocidad normal después de un cruce con los
+  /// tempos emparejados (en ~6s, imperceptible).
+  Future<void> _glideToNormalSpeed(BasicPlayer player, double from) async {
+    const steps = 20;
+    for (var i = 1; i <= steps; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      if (player != _active || status == AutomixStatus.idle) return;
+      await player.setSpeed(from + (1.0 - from) * i / steps);
+    }
+  }
+
+  /// Analiza de antemano la que sigue, para que el cruce pueda ir al pulso.
+  void _prefetchFeatures() {
+    final next = nextSong;
+    if (next == null) return;
+    unawaited(_features.featuresFor(next.filePath,
+        durationMs: next.duration?.inMilliseconds));
   }
 
   /// Fuerza el paso al siguiente tema ya, sin esperar a que el actual esté
@@ -302,7 +392,7 @@ class AutomixEngine extends ChangeNotifier {
   }
 
   Future<void> resumeSession() async {
-    unawaited(_active.play()); // ver nota sobre play() en start()
+    await _active.play();
     _reportState();
     notifyListeners();
   }

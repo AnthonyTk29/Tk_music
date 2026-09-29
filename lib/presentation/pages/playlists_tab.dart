@@ -39,7 +39,8 @@ class PlaylistsTab extends StatelessWidget {
                     subtitle: Text('${playlist.songIds.length} canciones'),
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (_) => PlaylistDetailScreen(playlistId: playlist.id),
+                        builder: (_) =>
+                            PlaylistDetailScreen(playlistId: playlist.id),
                       ),
                     ),
                   );
@@ -51,7 +52,7 @@ class PlaylistsTab extends StatelessWidget {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _createPlaylist(context),
-        tooltip: 'Nueva playlist',
+        tooltip: 'Nueva lista',
         child: const Icon(Icons.add),
       ),
     );
@@ -62,7 +63,7 @@ class PlaylistsTab extends StatelessWidget {
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Nueva playlist'),
+        title: const Text('Nueva lista'),
         content: TextField(
           controller: controller,
           autofocus: true,
@@ -107,7 +108,7 @@ class _EmptyState extends StatelessWidget {
                 size: 40, color: theme.colorScheme.onSurfaceVariant),
             const SizedBox(height: 12),
             Text(
-              'Todavía no tienes playlists',
+              'Todavía no tenés listas de reproducción',
               style: theme.textTheme.bodyMedium
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               textAlign: TextAlign.center,
@@ -116,7 +117,7 @@ class _EmptyState extends StatelessWidget {
             OutlinedButton.icon(
               onPressed: onCreate,
               icon: const Icon(Icons.add),
-              label: const Text('Crear playlist'),
+              label: const Text('Crear lista'),
             ),
           ],
         ),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
@@ -7,25 +8,38 @@ import 'package:audio_session/audio_session.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'active_profile.dart';
+import 'app_audio_handler.dart';
 import 'artwork_cache.dart';
+import 'crossfade_coordinator.dart';
+import 'equalizer_controller.dart';
 import 'equalizer_store.dart';
 import 'favorites_store.dart';
 import 'recent_songs_store.dart';
 
-class MyAudioHandler extends BaseAudioHandler with SeekHandler {
+class MyAudioHandler extends BaseAudioHandler
+    with SeekHandler
+    implements AppAudioHandler {
   // El equalizer tiene que existir ANTES de crear _player, porque se lo
   // engancha en su audioPipeline al construirlo — no se puede sumar un
   // efecto de audio a un AudioPlayer ya creado.
   final _equalizer = AndroidEqualizer();
-  late final _player =
-      AudioPlayer(audioPipeline: AudioPipeline(androidAudioEffects: [_equalizer]));
+  // Para el volumen parejo: sube las canciones grabadas bajas (setVolume de
+  // just_audio no pasa de 1.0).
+  final _loudnessEnhancer = AndroidLoudnessEnhancer();
+  late final _player = AudioPlayer(
+      audioPipeline:
+          AudioPipeline(androidAudioEffects: [_equalizer, _loudnessEnhancer]));
+  late final _crossfade = CrossfadeCoordinator(_MainPlayerAdapter(this));
+  double _enhancerGainDb = 0;
   final _equalizerStore = EqualizerStore();
   final _artwork = ArtworkCache();
   final _recentSongs = RecentSongsStore();
 
   /// Para la pantalla del Ecualizador: bandas de frecuencia y su ganancia,
   /// vía el efecto nativo de Android (no hace falta código nativo propio).
-  AndroidEqualizer get equalizer => _equalizer;
+  @override
+  late final EqualizerController equalizer =
+      AndroidEqualizerController(_equalizer);
 
   // Singleton: la pantalla de Favoritos escucha al mismo objeto, así que
   // marcar "me gusta" desde la notificación se refleja ahí en vivo.
@@ -36,6 +50,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   /// Hora en la que se pausará por el temporizador de apagado, o `null` si
   /// no hay uno activo. Las pantallas lo escuchan directamente.
+  @override
   final ValueNotifier<DateTime?> sleepTimerEndsAt = ValueNotifier(null);
 
   // _transformEvent reconstruye el PlaybackState entero en cada evento del
@@ -90,7 +105,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
             case AudioInterruptionType.duck:
               // Bajar el volumen en vez de pausar (p. ej. notificaciones o
               // llamadas que solo piden convivir, no el control exclusivo).
-              _player.setVolume(0.3);
+              _crossfade.setDucked(true);
               break;
             case AudioInterruptionType.pause:
             case AudioInterruptionType.unknown:
@@ -98,7 +113,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
               break;
           }
         } else {
-          _player.setVolume(1.0);
+          _crossfade.setDucked(false);
         }
       }),
     );
@@ -114,6 +129,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
         playbackState.add(_transformEvent(event));
       }),
     );
+    _crossfade.attach();
     _subscriptions.add(
       _player.currentIndexStream.listen(_onIndexChanged),
     );
@@ -145,6 +161,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   void _onIndexChanged(int? index) {
     final items = queue.value;
     if (index == null || index >= items.length) return;
+    unawaited(_crossfade.onTrackChanged(index));
     final item = items[index];
     mediaItem.add(item);
     _attachArtwork(index);
@@ -261,6 +278,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   /// notificación (play/pausa/siguiente/stop) hacia
   /// [onPlay]/[onPause]/[onSkipNext]/[onStop]. La notificación en sí se
   /// actualiza llamando a [reportExternalState].
+  @override
   void takeExternalControl({
     required Future<void> Function() onPlay,
     required Future<void> Function() onPause,
@@ -275,8 +293,31 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     _externalSkipNext = onSkipNext;
   }
 
+  @override
+  void refreshMediaItem(MediaItem item) {
+    final items = queue.value;
+    final index = items.indexWhere((i) => i.id == item.id);
+    if (index < 0) return;
+    // Conserva la duración real; la carátula se vuelve a resolver (pudo
+    // cambiar en el editor).
+    final old = items[index];
+    final updated = item.copyWith(duration: item.duration ?? old.duration);
+    queue.add(List<MediaItem>.from(items)..[index] = updated);
+    if (mediaItem.value?.id == item.id) mediaItem.add(updated);
+    unawaited(_refreshArtwork(index));
+  }
+
+  /// Después de cambiar la carátula en el editor, la notificación la vuelve
+  /// a buscar.
+  Future<void> _refreshArtwork(int index) async {
+    final songId = queue.value[index].extras?['songId'] as int?;
+    if (songId != null) _artwork.forget(songId);
+    await _attachArtwork(index);
+  }
+
   /// Devuelve la notificación al reproductor principal, tal como haya
   /// quedado (pausado, en la canción en la que estaba antes del Automix).
+  @override
   void releaseExternalControl() {
     if (!_externalControlActive) return;
     _externalControlActive = false;
@@ -315,6 +356,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   /// como si fuera un archivo (p. ej. desde los controles rápidos del
   /// sistema), y con un id inventado eso fallaba con
   /// "Failed to open file 'automix:...'".
+  @override
   void reportExternalState({
     required String title,
     String? artist,
@@ -393,6 +435,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   /// Reordena la cola actual (pantalla "A continuación"). La posición que
   /// esté sonando se sigue reproduciendo sin cortes, solo cambia el orden.
+  @override
   Future<void> moveQueueItem(int oldIndex, int newIndex) async {
     final items = List<MediaItem>.from(queue.value);
     if (oldIndex < 0 ||
@@ -438,7 +481,8 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   @override
-  Future<dynamic> customAction(String name, [Map<String, dynamic>? extras]) async {
+  Future<dynamic> customAction(String name,
+      [Map<String, dynamic>? extras]) async {
     switch (name) {
       case 'like':
         final songId = mediaItem.value?.extras?['songId'] as int?;
@@ -469,6 +513,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   // la más nueva — así nunca "ganan" dos canciones a la vez ni se cruzan.
   int _queueRequestId = 0;
 
+  @override
   Future<void> setQueue(
     List<MediaItem> items, {
     int startIndex = 0,
@@ -492,8 +537,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       final prefs = await SharedPreferences.getInstance();
       final savedPath = prefs.getString(_lastSongPathKey);
       final savedPosition = prefs.getInt(_lastSongPositionKey);
-      final savedIndex =
-          savedPath == null ? -1 : items.indexWhere((item) => item.id == savedPath);
+      final savedIndex = savedPath == null
+          ? -1
+          : items.indexWhere((item) => item.id == savedPath);
       if (savedIndex >= 0) {
         initialIndex = savedIndex;
         resumePositionMs = savedPosition;
@@ -520,9 +566,13 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   /// Los `MediaItem.id` de canciones del pendrive son URIs `content://`
-  /// (SAF), no rutas de archivo reales — `Uri.file()` los rompería.
-  Uri _sourceUri(String id) =>
-      id.startsWith('content://') ? Uri.parse(id) : Uri.file(id);
+  /// (SAF) y los de la sección Online son `https://`, no rutas de archivo
+  /// reales — `Uri.file()` los rompería.
+  Uri _sourceUri(String id) => id.startsWith('content://') ||
+          id.startsWith('http://') ||
+          id.startsWith('https://')
+      ? Uri.parse(id)
+      : Uri.file(id);
 
   String get _lastSongPathKey => '${ActiveProfile.instance.key}.lastSongPath';
   String get _lastSongPositionKey =>
@@ -538,6 +588,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
 
   /// Pausa la reproducción una vez transcurrido [duration]. Reemplaza
   /// cualquier temporizador ya activo en vez de acumularlos.
+  @override
   void setSleepTimer(Duration duration) {
     _sleepTimer?.cancel();
     sleepTimerEndsAt.value = DateTime.now().add(duration);
@@ -547,6 +598,7 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
     });
   }
 
+  @override
   void cancelSleepTimer() {
     _sleepTimer?.cancel();
     _sleepTimer = null;
@@ -561,5 +613,73 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       await sub.cancel();
     }
     await _player.dispose();
+  }
+}
+
+/// Puente entre el reproductor de Android y [CrossfadeCoordinator].
+class _MainPlayerAdapter implements MainPlayerAdapter {
+  _MainPlayerAdapter(this._handler);
+
+  final MyAudioHandler _handler;
+  AudioPlayer get _player => _handler._player;
+
+  @override
+  Duration get position => _player.position;
+  @override
+  Duration? get duration => _player.duration;
+  @override
+  bool get playing => _player.playing;
+  @override
+  Stream<Duration> get positionStream => _player.positionStream;
+  @override
+  int? get currentIndex => _player.currentIndex;
+  @override
+  int? get nextIndex => _player.nextIndex;
+  @override
+  bool get repeatOne => _player.loopMode == LoopMode.one;
+  @override
+  bool get externallyControlled => _handler._externalControlActive;
+
+  @override
+  String? idAt(int index) {
+    final items = _handler.queue.value;
+    return index >= 0 && index < items.length ? items[index].id : null;
+  }
+
+  @override
+  int? songIdAt(int index) {
+    final items = _handler.queue.value;
+    return index >= 0 && index < items.length
+        ? (items[index].extras?['songId'] as int?)
+        : null;
+  }
+
+  @override
+  Future<void> setVolume(double volume) async {
+    // Por encima de 1.0 se amplifica con el realzador del sistema; solo se
+    // le habla cuando cambia (el cruce llama esto varias veces por segundo).
+    final boostDb = volume > 1.0 ? 20 * math.log(volume) / math.ln10 : 0.0;
+    if ((boostDb - _handler._enhancerGainDb).abs() > 0.05) {
+      _handler._enhancerGainDb = boostDb;
+      try {
+        await _handler._loudnessEnhancer.setEnabled(boostDb > 0);
+        if (boostDb > 0) {
+          await _handler._loudnessEnhancer.setTargetGain(boostDb);
+        }
+      } catch (_) {
+        // Equipo sin el efecto: suena sin amplificar, no rompe nada.
+      }
+    }
+    await _player.setVolume(volume.clamp(0.0, 1.0));
+  }
+
+  @override
+  Future<void> seekTo(int index, Duration position) =>
+      _player.seek(position, index: index);
+
+  @override
+  Future<void> play() async {
+    // El Future de play() de just_audio recién se completa al pausar.
+    unawaited(_player.play());
   }
 }

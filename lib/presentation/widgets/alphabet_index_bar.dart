@@ -1,8 +1,34 @@
 import 'package:flutter/material.dart';
 
 const _letters = [
-  '#', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
-  'N', 'Ñ', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+  '#',
+  'A',
+  'B',
+  'C',
+  'D',
+  'E',
+  'F',
+  'G',
+  'H',
+  'I',
+  'J',
+  'K',
+  'L',
+  'M',
+  'N',
+  'Ñ',
+  'O',
+  'P',
+  'Q',
+  'R',
+  'S',
+  'T',
+  'U',
+  'V',
+  'W',
+  'X',
+  'Y',
+  'Z',
 ];
 
 /// Franja lateral A-Z para saltar rápido en una lista larga (como en
@@ -113,6 +139,18 @@ class _AlphabetIndexBarState extends State<AlphabetIndexBar> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        // Cuántas letras entran de verdad en el alto disponible (con el
+        // tamaño de texto del sistema). Si no entran todas — ventana baja en
+        // desktop, teléfono apaisado — se muestran grupos: una letra por
+        // grupo, con el alto proporcional a cuántas letras abarca, así el
+        // dedo sigue cayendo sobre el alfabeto completo.
+        const fontSize = 9.0;
+        final rowHeight =
+            MediaQuery.textScalerOf(context).scale(fontSize) * 1.45;
+        final fits = (constraints.maxHeight / rowHeight).floor();
+        if (fits < 5) return const SizedBox.shrink();
+        final groups = _groupLetters(fits);
+
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onVerticalDragUpdate: (details) => _handleTouch(
@@ -125,23 +163,24 @@ class _AlphabetIndexBarState extends State<AlphabetIndexBar> {
             width: 18,
             color: Colors.transparent,
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                for (final letter in _letters)
-                  Text(
-                    letter,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: _activeLetter == letter
-                          ? FontWeight.w800
-                          : FontWeight.w500,
-                      color: available.containsKey(letter)
-                          ? (_activeLetter == letter
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.onSurfaceVariant)
-                          : theme.colorScheme.onSurfaceVariant
-                              .withValues(alpha: 0.25),
+                for (final group in groups)
+                  Expanded(
+                    flex: group.length,
+                    child: Center(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: _letterText(
+                          // En grupos, si la letra activa está adentro, se
+                          // muestra esa.
+                          group.contains(_activeLetter)
+                              ? _activeLetter!
+                              : group.first,
+                          available,
+                          theme,
+                          fontSize,
+                        ),
+                      ),
                     ),
                   ),
               ],
@@ -149,6 +188,39 @@ class _AlphabetIndexBarState extends State<AlphabetIndexBar> {
           ),
         );
       },
+    );
+  }
+
+  /// Parte el alfabeto en [count] grupos seguidos (del mismo tamaño o casi).
+  List<List<String>> _groupLetters(int count) {
+    if (count >= _letters.length) {
+      return [
+        for (final letter in _letters) [letter]
+      ];
+    }
+    final groups = <List<String>>[];
+    for (var i = 0; i < count; i++) {
+      final start = (i * _letters.length / count).floor();
+      final end = ((i + 1) * _letters.length / count).floor();
+      groups.add(_letters.sublist(start, end));
+    }
+    return groups;
+  }
+
+  Widget _letterText(String letter, Map<String, int> available, ThemeData theme,
+      double fontSize) {
+    return Text(
+      letter,
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        fontSize: fontSize,
+        fontWeight: _activeLetter == letter ? FontWeight.w800 : FontWeight.w500,
+        color: available.containsKey(letter)
+            ? (_activeLetter == letter
+                ? theme.colorScheme.primary
+                : theme.colorScheme.onSurfaceVariant)
+            : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.25),
+      ),
     );
   }
 }

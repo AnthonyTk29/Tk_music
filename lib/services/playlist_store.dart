@@ -23,7 +23,8 @@ class PlaylistStore extends ChangeNotifier {
     final raw = prefs.getString(_key);
     return readJson(
       raw,
-      (decoded) => (decoded as List<dynamic>).cast<Map<String, dynamic>>().map((json) {
+      (decoded) =>
+          (decoded as List<dynamic>).cast<Map<String, dynamic>>().map((json) {
         return Playlist(
           id: json['id'] as String,
           name: json['name'] as String,
@@ -37,7 +38,8 @@ class PlaylistStore extends ChangeNotifier {
 
   Future<Playlist> create(String name) async {
     final playlists = await getAll();
-    final playlist = Playlist(id: _newId(), name: name.trim(), songIds: const []);
+    final playlist =
+        Playlist(id: _newId(), name: name.trim(), songIds: const []);
     await _save([...playlists, playlist]);
     return playlist;
   }

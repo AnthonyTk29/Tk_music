@@ -5,6 +5,7 @@ import 'package:tk_music/core/di/service_locator.dart';
 import 'package:tk_music/presentation/pages/favorites_tab.dart';
 import 'package:tk_music/presentation/pages/home_tab.dart';
 import 'package:tk_music/presentation/pages/library_tab.dart';
+import 'package:tk_music/presentation/pages/online_tab.dart';
 import 'package:tk_music/presentation/pages/search_tab.dart';
 import 'package:tk_music/presentation/widgets/app_drawer.dart';
 import 'package:tk_music/presentation/widgets/app_header.dart';
@@ -26,16 +27,16 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
     return Scaffold(
       drawer: const AppDrawer(),
       appBar: AppBar(
-        title: const AppHeaderTitle(),
+        title: const AppHeaderTitle(crumb: 'Inicio'),
         actions: [
           if (isAudioAvailable)
             StreamBuilder<PlaybackState>(
               stream: sl<AudioHandler>().playbackState,
               builder: (context, snapshot) {
-                final shuffle = snapshot.data?.shuffleMode ==
-                    AudioServiceShuffleMode.all;
+                final shuffle =
+                    snapshot.data?.shuffleMode == AudioServiceShuffleMode.all;
                 return IconButton(
-                  tooltip: 'Shuffle',
+                  tooltip: 'Aleatorio',
                   onPressed: () => sl<AudioHandler>().setShuffleMode(shuffle
                       ? AudioServiceShuffleMode.none
                       : AudioServiceShuffleMode.all),
@@ -65,6 +66,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                     SearchTab(),
                     LibraryTab(),
                     FavoritesTab(),
+                    OnlineTab(),
                   ],
                 ),
               ),
@@ -104,6 +106,11 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
             selectedIcon: Icon(Icons.thumb_up),
             label: 'Favoritos',
           ),
+          NavigationDestination(
+            icon: Icon(Icons.cloud_outlined),
+            selectedIcon: Icon(Icons.cloud),
+            label: 'En línea',
+          ),
         ],
       ),
     );
@@ -130,8 +137,8 @@ class _AudioUnavailableBanner extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              'No se pudo iniciar el reproductor de audio. Cierra la app '
-              'por completo y vuelve a abrirla.',
+              'No se pudo iniciar el reproductor de audio. Cerrá la app '
+              'por completo y volvé a abrirla.',
               style: TextStyle(color: theme.colorScheme.onErrorContainer),
             ),
           ),

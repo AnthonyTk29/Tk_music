@@ -1,11 +1,11 @@
 import 'package:audio_service/audio_service.dart';
 
 import 'package:tk_music/core/di/service_locator.dart';
-import 'package:tk_music/data/models/song_mapper.dart';
+import 'package:tk_music/services/media_item_mapper.dart';
 import 'package:tk_music/domain/entities/song.dart';
 import 'package:tk_music/presentation/providers/song_provider.dart';
-import 'package:tk_music/services/audio_handler.dart';
 import 'package:tk_music/services/external_storage_service.dart';
+import 'package:tk_music/services/queue_capable_handler.dart';
 
 /// Reproduce [song] arrancando desde la biblioteca completa (no desde una
 /// playlist ni un álbum/artista).
@@ -22,9 +22,20 @@ Future<void> playFromLibrary(SongProvider provider, Song song) async {
   final index = provider.songs.indexOf(song);
   if (index < 0) return;
 
-  final handler = sl<AudioHandler>() as MyAudioHandler;
-  final items = provider.songs.map(SongMapper.toMediaItem).toList();
-  await handler.setQueue(items, startIndex: index);
+  final handler = sl<AudioHandler>();
+  final items = provider.songs.map(MediaItemMapper.fromSong).toList();
+  await (handler as QueueCapableHandler).setQueue(items, startIndex: index);
+  await handler.play();
+}
+
+/// Reproduce [songs] como cola, arrancando por [index] (el gestor de
+/// archivos de la Biblioteca en desktop: lo que se ve en ese momento).
+Future<void> playSongList(List<Song> songs, int index) async {
+  if (!isAudioAvailable || songs.isEmpty) return;
+  final handler = sl<AudioHandler>();
+  final items = songs.map(MediaItemMapper.fromSong).toList();
+  await (handler as QueueCapableHandler)
+      .setQueue(items, startIndex: index.clamp(0, songs.length - 1));
   await handler.play();
 }
 
@@ -38,7 +49,7 @@ Future<void> playFromExternalFolder(
   if (!isAudioAvailable) return;
   if (index < 0 || index >= audioFiles.length) return;
 
-  final handler = sl<AudioHandler>() as MyAudioHandler;
+  final handler = sl<AudioHandler>() as QueueCapableHandler;
   final items = audioFiles
       .map((entry) => MediaItem(
             id: entry.uri,
@@ -46,7 +57,7 @@ Future<void> playFromExternalFolder(
           ))
       .toList();
   await handler.setQueue(items, startIndex: index);
-  await handler.play();
+  await sl<AudioHandler>().play();
 }
 
 String _titleFrom(String fileName) {

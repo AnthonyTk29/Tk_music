@@ -30,6 +30,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Textos propios de Flutter (copiar/pegar, "Atrás", "Cerrar"…) en español.
+  flutter_localizations:
+    sdk: flutter
+  # @immutable en las entidades del dominio sin depender de Flutter.
+  meta: ^1.16.0
 
 
   # The following adds the Cupertino Icons font to your application.
@@ -52,6 +57,40 @@ dependencies:
   # persona.
   firebase_core: ^3.8.0
   firebase_crashlytics: ^4.2.0
+  # Reproductor para desktop (Windows/Linux/macOS) — just_audio no tiene
+  # soporte sólido ahí. Android/iOS se quedan con just_audio tal cual; esto
+  # solo lo usa DesktopAudioHandler.
+  media_kit: ^1.1.11
+  # Solo las libs nativas de desktop: el meta-paquete media_kit_libs_audio
+  # también metía libmpv en el APK de Android, donde no se usa.
+  # Ojo: esta libmpv trae FFmpeg recortado; de sus filtros de audio solo
+  # tiene `equalizer` (sin bass/treble/pan/volume). El Modo DJ arma todo
+  # con eso (ver DjDeck).
+  media_kit_libs_windows_audio: ^1.0.9
+  media_kit_libs_linux: ^1.2.1
+  media_kit_libs_macos_audio: ^1.1.4
+  # Selector de carpeta/archivos multiplataforma — en desktop no existe un
+  # equivalente a MediaStore, así que la biblioteca ahí se arma escaneando
+  # una carpeta elegida a mano.
+  file_picker: ^8.1.2
+  # Decodificar/redimensionar/codificar a JPEG las carátulas que se eligen en
+  # el editor de tags (Dart puro, sin código nativo).
+  image: ^4.2.0
+  path: ^1.9.0
+  # "Unirse con QR" en Sincronizar con otro dispositivo: el anfitrión
+  # muestra el código (qr_flutter, Dart puro) y el invitado lo escanea con
+  # la cámara — mobile_scanner en Android; en Windows no existe, así que se
+  # toma la imagen con camera_windows y se decodifica con zxing2 (Dart puro).
+  # camera_windows fijo en 0.2.6+4: la siguiente pide Flutter 3.38.
+  qr_flutter: ^4.1.0
+  # Alguna dependencia usa íconos Cupertino; sin esta fuente, el build de
+  # release avisa "Expected to find fonts for ... CupertinoIcons". En el APK
+  # solo quedan los íconos que se usan.
+  cupertino_icons: ^1.0.8
+  mobile_scanner: ^7.0.0
+  zxing2: ^0.2.4
+  camera_platform_interface: ^2.6.0
+  camera_windows: 0.2.6+4
 
 dependency_overrides:
   # on_audio_query_forked 2.9.1 declara mal su default_package de Android
@@ -64,6 +103,9 @@ dependency_overrides:
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  # Pruebas dentro de la app real (con los plugins nativos de Windows).
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to

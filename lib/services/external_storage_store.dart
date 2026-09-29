@@ -48,7 +48,9 @@ class ExternalStorageStore extends ChangeNotifier {
       picked = await _service.pickDirectory();
     } on PlatformException catch (e) {
       throw AppException(
-        e.code == 'BUSY' ? AppErrorCode.storageBusy : AppErrorCode.storagePickFailed,
+        e.code == 'BUSY'
+            ? AppErrorCode.storageBusy
+            : AppErrorCode.storagePickFailed,
         userMessage: e.code == 'BUSY'
             ? 'Ya hay una selección de carpeta en curso.'
             : 'No se pudo conectar esa carpeta.',

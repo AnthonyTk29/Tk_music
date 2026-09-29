@@ -21,7 +21,8 @@ class ProfileRepositoryImpl implements ProfileRepository {
       raw,
       (decoded) => (decoded as List<dynamic>)
           .cast<Map<String, dynamic>>()
-          .map((json) => Profile(id: json['id'] as String, name: json['name'] as String))
+          .map((json) =>
+              Profile(id: json['id'] as String, name: json['name'] as String))
           .toList(),
       fallback: const [],
       context: 'ProfileRepositoryImpl.getProfiles',
@@ -70,5 +71,6 @@ class ProfileRepositoryImpl implements ProfileRepository {
     await prefs.setString(_profilesKey, raw);
   }
 
-  String _newId() => List.generate(8, (_) => _random.nextInt(16).toRadixString(16)).join();
+  String _newId() =>
+      List.generate(8, (_) => _random.nextInt(16).toRadixString(16)).join();
 }

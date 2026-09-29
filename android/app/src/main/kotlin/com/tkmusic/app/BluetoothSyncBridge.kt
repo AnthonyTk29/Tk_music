@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
 import androidx.core.content.ContextCompat
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
@@ -19,32 +20,74 @@ import org.json.JSONObject
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
-import java.io.FileOutputStream
+import java.io.IOException
+import java.io.RandomAccessFile
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 private val SYNC_UUID: UUID = UUID.fromString("8ce255c0-200a-11e0-ac64-0800200c9a66")
-private const val MAX_GUESTS = 4
+private const val MAX_GUESTS = 6
+
+// Canal RFCOMM fijo en el que escucha un anfitrión Windows (mismo valor que
+// kPreferredChannel en windows/runner/bluetooth_sync_plugin.cpp): se prueba
+// directo si la búsqueda del servicio por SDP falla.
+private const val WINDOWS_HOST_CHANNEL = 22
+
+// Tipos de frame ([1 byte tipo][4 bytes tamaño][payload]). Mismo protocolo
+// que windows/runner/bluetooth_sync_plugin.cpp.
+private const val FRAME_CONTROL = 1     // JSON de control
+private const val FRAME_FILE_START = 3  // JSON con la metadata del archivo
+private const val FRAME_FILE_CHUNK = 4  // [8 bytes offset][bytes]
+private const val FRAME_FILE_ABORT = 5  // transferId (UTF-8)
+
+private const val CHUNK_SIZE = 32 * 1024
+// El final del archivo viaja primero: ahí están los tags ID3v1 (MP3) o el
+// índice "moov" (M4A) que el reproductor lee antes de arrancar — sin esto
+// no podría empezar a sonar hasta tener el archivo completo.
+private const val TAIL_SIZE = 256L * 1024
+private const val PROGRESS_STEP = 64L * 1024
+
+private class IncomingFile(
+    val transferId: String,
+    val meta: JSONObject,
+    val file: File,
+    val raf: RandomAccessFile,
+    val size: Long
+) {
+    var received = 0L
+    // Bytes disponibles = [0, head) ∪ [tailFrom, tailEnd).
+    var head = 0L
+    var tailFrom = size
+    var tailEnd = size
+    var lastEmitted = 0L
+}
 
 private class Connection(
     val address: String,
     val socket: BluetoothSocket,
     val input: DataInputStream,
     val output: DataOutputStream
-)
+) {
+    // Un solo archivo saliente a la vez por conexión (los trozos de dos
+    // archivos no se pueden mezclar); los frames de control sí se cuelan
+    // entre trozo y trozo, porque cada trozo toma el lock de escritura
+    // (synchronized(conn)) por separado.
+    val fileLock = Object()
+    @Volatile var cancelOutgoing = false
+    // Solo lo toca el hilo de lectura de esta conexión.
+    var incoming: IncomingFile? = null
+}
 
 /// Transporte Bluetooth Classic (RFCOMM) propio para "Sincronizar con otro
-/// teléfono": un socket por dispositivo conectado, dos tipos de frame
-/// ([1 byte tipo][4 bytes tamaño][payload]) — tipo 1 = JSON de control
-/// (play/pause/seek/reloj), tipo 2 = metadata de un archivo de audio
-/// entrante, inmediatamente seguida de sus bytes crudos (sin framing
-/// adicional, hasta completar fileSize). Toda la lógica de sincronización de
-/// reloj/drift vive en Dart (PartySyncEngine); esto es solo una tubería
-/// confiable — ahora para hasta [MAX_GUESTS] invitados a la vez cuando se
-/// hace de anfitrión, no solo uno.
+/// dispositivo": un socket por dispositivo conectado. Los archivos viajan en
+/// trozos de [CHUNK_SIZE] para que play/pausa/sincronía no queden trabados
+/// detrás de una transferencia de varios MB, y el receptor puede empezar a
+/// reproducir antes de tener el archivo entero (streaming: ver
+/// SyncStreamServer en Dart). Toda la lógica de sincronización vive en Dart
+/// (PartySyncEngine); esto es solo una tubería confiable para hasta
+/// [MAX_GUESTS] invitados a la vez.
 class BluetoothSyncBridge(private val activity: MainActivity) {
     private val adapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private var serverSocket: BluetoothServerSocket? = null
@@ -114,20 +157,22 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
         when (call.method) {
             "getPairedDevices" -> getPairedDevices(result)
             "getCapacity" -> getCapacity(result)
+            "getLocalAdapter" -> getLocalAdapter(result)
+            "openBluetoothSettings" -> {
+                try {
+                    activity.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                    result.success(null)
+                } catch (e: Exception) {
+                    result.error("OPEN_FAILED", e.message, null)
+                }
+            }
             "getActiveSessions" -> getActiveSessions(result)
             "startHosting" -> startHosting(result)
             "connectToDevice" -> {
                 val address = call.argument<String>("address")
+                val channel = call.argument<Number>("channel")?.toInt()
                 if (address == null) result.error("BAD_ARGS", "Falta address", null)
-                else connectToDevice(address, result)
-            }
-            "sendSongFile" -> {
-                val path = call.argument<String>("path")
-                val title = call.argument<String>("title") ?: "Canción"
-                val artist = call.argument<String>("artist")
-                val durationMs = call.argument<Number>("durationMs")?.toLong()
-                if (path == null) result.error("BAD_ARGS", "Falta path", null)
-                else sendSongFile(path, title, artist, durationMs, result)
+                else connectToDevice(address, channel, result)
             }
             "sendSongFileTo" -> {
                 val address = call.argument<String>("address")
@@ -135,11 +180,18 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
                 val title = call.argument<String>("title") ?: "Canción"
                 val artist = call.argument<String>("artist")
                 val durationMs = call.argument<Number>("durationMs")?.toLong()
+                val transferId = call.argument<String>("transferId") ?: ""
+                val extraJson = call.argument<String>("extraJson")
                 if (address == null || path == null) {
                     result.error("BAD_ARGS", "Falta address/path", null)
                 } else {
-                    sendSongFileTo(address, path, title, artist, durationMs, result)
+                    sendSongFileTo(address, path, title, artist, durationMs, transferId, extraJson, result)
                 }
+            }
+            "cancelTransfer" -> {
+                val address = call.argument<String>("address")
+                if (address != null) connections[address]?.cancelOutgoing = true
+                result.success(null)
             }
             "sendControl" -> {
                 val json = call.argument<String>("json")
@@ -200,6 +252,19 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
         return true
     }
 
+    // Nombre del Bluetooth de este teléfono, para el QR de "Unirse con QR".
+    // La dirección no: desde Android 6 el sistema devuelve una falsa
+    // (02:00:00:00:00:00) a las apps.
+    @Suppress("MissingPermission")
+    private fun getLocalAdapter(result: MethodChannel.Result) {
+        if (adapter == null || !hasBluetoothPermission()) {
+            result.success(mapOf("name" to null, "address" to null))
+            return
+        }
+        val name = try { adapter.name } catch (e: SecurityException) { null }
+        result.success(mapOf("name" to name, "address" to null))
+    }
+
     private fun getPairedDevices(result: MethodChannel.Result) {
         if (adapter == null) {
             result.error("NO_ADAPTER", "Este dispositivo no tiene Bluetooth", null)
@@ -222,8 +287,9 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
     // Cálculo previo de cuántas sesiones Bluetooth activas puede sostener el
     // dispositivo. Un piconet BR/EDR (Bluetooth clásico) da soporte a 1
     // maestro + hasta 7 esclavos activos, y este sincronizador abre una
-    // sesión RFCOMM por invitado, así que 4 invitados + este teléfono entran
-    // de sobra en cualquier equipo con Classic. Lo que SÍ se valida acá es
+    // sesión RFCOMM por invitado, así que 6 invitados + este teléfono entran
+    // y todavía queda un lugar libre (p. ej. para unos auriculares o un
+    // parlante Bluetooth conectados al anfitrión). Lo que SÍ se valida acá es
     // la parte real que puede hacer fallar la función: dispositivos que solo
     // traen Bluetooth LE (tablets/equipos nuevos que omiten BR/EDR) no pueden
     // ser anfitrión de ni una sola sesión RFCOMM, y eso no se puede saber
@@ -294,26 +360,63 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
         }
     }
 
-    private fun connectToDevice(address: String, result: MethodChannel.Result) {
+    // Se prueban varias formas, de la más normal a la más directa, porque
+    // algunas combinaciones de teléfono y placa Bluetooth de PC fallan en
+    // una y no en otra:
+    //  1. buscar el servicio de TK Music por SDP (cifrado, lo normal),
+    //  2. lo mismo sin cifrar,
+    //  3. el canal RFCOMM directo (el del QR y el fijo del anfitrión Windows),
+    //     sin pasar por SDP.
+    // Si todas fallan, el error dice qué pasó con cada una.
+    private fun connectToDevice(address: String, channelHint: Int?, result: MethodChannel.Result) {
         if (adapter == null || !hasBluetoothPermission()) {
             result.error("NO_PERMISSION", "Falta Bluetooth o el permiso", null)
             return
         }
         thread {
-            try {
-                val device: BluetoothDevice = adapter.getRemoteDevice(address)
-                adapter.cancelDiscovery()
-                val newSocket = device.createRfcommSocketToServiceRecord(SYNC_UUID)
-                newSocket.connect()
-                running.set(true)
-                activity.runOnUiThread { result.success(null) }
-                onConnected(newSocket)
+            val device: BluetoothDevice = try {
+                adapter.getRemoteDevice(address)
             } catch (e: Exception) {
-                activity.runOnUiThread {
-                    result.error("CONNECT_FAILED", e.message, null)
+                activity.runOnUiThread { result.error("CONNECT_FAILED", e.message, null) }
+                return@thread
+            }
+            try { adapter.cancelDiscovery() } catch (_: SecurityException) {}
+            val attempts = mutableListOf<Pair<String, () -> BluetoothSocket>>(
+                "servicio" to { device.createRfcommSocketToServiceRecord(SYNC_UUID) },
+                "servicio sin cifrar" to { device.createInsecureRfcommSocketToServiceRecord(SYNC_UUID) },
+            )
+            for (channel in listOfNotNull(channelHint, WINDOWS_HOST_CHANNEL).distinct()) {
+                attempts += "canal $channel" to { rfcommOnChannel(device, channel, secure = true) }
+                attempts += "canal $channel sin cifrar" to { rfcommOnChannel(device, channel, secure = false) }
+            }
+            val errors = mutableListOf<String>()
+            for ((label, open) in attempts) {
+                var socket: BluetoothSocket? = null
+                try {
+                    socket = open()
+                    socket.connect()
+                    running.set(true)
+                    activity.runOnUiThread { result.success(mapOf("via" to label)) }
+                    onConnected(socket)
+                    return@thread
+                } catch (e: Exception) {
+                    val reason = (e.cause ?: e).message ?: e.javaClass.simpleName
+                    errors += "$label: $reason"
+                    try { socket?.close() } catch (_: Exception) {}
                 }
             }
+            activity.runOnUiThread {
+                result.error("CONNECT_FAILED", errors.joinToString(" | "), null)
+            }
         }
+    }
+
+    // BluetoothDevice.createRfcommSocket(canal) no es API pública, pero
+    // existe en todos los Android: conecta a un canal sin buscar por SDP.
+    private fun rfcommOnChannel(device: BluetoothDevice, channel: Int, secure: Boolean): BluetoothSocket {
+        val name = if (secure) "createRfcommSocket" else "createInsecureRfcommSocket"
+        val method = device.javaClass.getMethod(name, Int::class.javaPrimitiveType)
+        return method.invoke(device, channel) as BluetoothSocket
     }
 
     private fun onConnected(socket: BluetoothSocket) {
@@ -333,31 +436,47 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
         readLoop(conn)
     }
 
+    private fun emit(event: Map<String, Any?>) {
+        activity.runOnUiThread { eventSink?.success(event) }
+    }
+
     private fun readLoop(conn: Connection) {
         thread {
             try {
                 while (running.get() && connections[conn.address] === conn) {
-                    val frameType = conn.input.readByte()
+                    val frameType = conn.input.readByte().toInt()
                     val length = conn.input.readInt()
-                    if (length < 0 || length > 200 * 1024 * 1024) {
-                        throw java.io.IOException("Frame inválido")
+                    if (length < 0 || length > 16 * 1024 * 1024) {
+                        throw IOException("Frame inválido")
                     }
-                    when (frameType.toInt()) {
-                        1 -> {
+                    when (frameType) {
+                        FRAME_CONTROL -> {
                             val bytes = ByteArray(length)
                             conn.input.readFully(bytes)
-                            val text = String(bytes, Charsets.UTF_8)
-                            activity.runOnUiThread {
-                                eventSink?.success(
-                                    mapOf("type" to "message", "json" to text, "address" to conn.address)
+                            emit(
+                                mapOf(
+                                    "type" to "message",
+                                    "json" to String(bytes, Charsets.UTF_8),
+                                    "address" to conn.address
                                 )
-                            }
+                            )
                         }
-                        2 -> {
+                        FRAME_FILE_START -> {
                             val bytes = ByteArray(length)
                             conn.input.readFully(bytes)
-                            val meta = JSONObject(String(bytes, Charsets.UTF_8))
-                            receiveIncomingFile(conn, meta)
+                            startIncomingFile(conn, JSONObject(String(bytes, Charsets.UTF_8)))
+                        }
+                        FRAME_FILE_CHUNK -> {
+                            if (length < 8) throw IOException("Trozo inválido")
+                            val offset = conn.input.readLong()
+                            val data = ByteArray(length - 8)
+                            conn.input.readFully(data)
+                            writeIncomingChunk(conn, offset, data)
+                        }
+                        FRAME_FILE_ABORT -> {
+                            val bytes = ByteArray(length)
+                            conn.input.readFully(bytes)
+                            abortIncomingFile(conn)
                         }
                         else -> {
                             val bytes = ByteArray(length)
@@ -366,166 +485,205 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
                     }
                 }
             } catch (e: Exception) {
+                abortIncomingFile(conn)
                 val stillOurs = connections[conn.address] === conn
                 connections.remove(conn.address, conn)
                 try { conn.socket.close() } catch (_: Exception) {}
                 if (stillOurs) {
-                    activity.runOnUiThread {
-                        eventSink?.success(
-                            mapOf("type" to "disconnected", "reason" to (e.message ?: ""), "address" to conn.address)
+                    emit(
+                        mapOf(
+                            "type" to "disconnected",
+                            "reason" to (e.message ?: ""),
+                            "address" to conn.address
                         )
-                    }
+                    )
                 }
             }
         }
     }
 
-    private fun receiveIncomingFile(conn: Connection, meta: JSONObject) {
-        val fileSize = meta.optLong("fileSize", 0L)
+    private fun startIncomingFile(conn: Connection, meta: JSONObject) {
+        // Un archivo anterior que quedó a medias (el anfitrión pasó a otra
+        // canción sin avisar): se descarta.
+        abortIncomingFile(conn)
+        val size = meta.optLong("fileSize", 0L)
+        val transferId = meta.optString("transferId", "")
         val fileName = meta.optString("fileName", "sync_received.mp3")
-        val destFile = File(
-            activity.getExternalFilesDir(null),
-            "sync_" + System.currentTimeMillis() + "_" + fileName
+            .map { if ("\\/:*?\"<>|".indexOf(it) >= 0) '_' else it }
+            .joinToString("")
+        val dir = File(activity.getExternalFilesDir(null), "sync").apply { mkdirs() }
+        val file = File(dir, "sync_" + System.currentTimeMillis() + "_" + fileName)
+        val raf = RandomAccessFile(file, "rw")
+        raf.setLength(size)
+        val incoming = IncomingFile(transferId, meta, file, raf, size)
+        conn.incoming = incoming
+        emit(
+            mapOf(
+                "type" to "file_started",
+                "transferId" to transferId,
+                "path" to file.absolutePath,
+                "total" to size,
+                "meta" to meta.toString(),
+                "address" to conn.address
+            )
         )
-        var received = 0L
-        val buffer = ByteArray(16 * 1024)
-        FileOutputStream(destFile).use { out ->
-            while (received < fileSize) {
-                val toRead = minOf(buffer.size.toLong(), fileSize - received).toInt()
-                val read = conn.input.read(buffer, 0, toRead)
-                if (read < 0) break
-                out.write(buffer, 0, read)
-                received += read
-                if (received % (256 * 1024) < buffer.size) {
-                    val progress = received
-                    activity.runOnUiThread {
-                        eventSink?.success(
-                            mapOf(
-                                "type" to "file_progress", "received" to progress,
-                                "total" to fileSize, "address" to conn.address
-                            )
-                        )
-                    }
-                }
-            }
+        if (size == 0L) finishIncomingFile(conn, incoming)
+    }
+
+    private fun writeIncomingChunk(conn: Connection, offset: Long, data: ByteArray) {
+        val incoming = conn.incoming ?: return
+        if (offset < 0 || offset + data.size > incoming.size) throw IOException("Trozo fuera de rango")
+        incoming.raf.seek(offset)
+        incoming.raf.write(data)
+        incoming.received += data.size
+        if (offset == incoming.head) {
+            incoming.head += data.size
+        } else {
+            if (incoming.tailFrom == incoming.size) incoming.tailEnd = offset
+            incoming.tailFrom = minOf(incoming.tailFrom, offset)
+            incoming.tailEnd = maxOf(incoming.tailEnd, offset + data.size)
         }
-        activity.runOnUiThread {
-            eventSink?.success(
+        val done = incoming.received >= incoming.size
+        if (done || incoming.received - incoming.lastEmitted >= PROGRESS_STEP) {
+            incoming.lastEmitted = incoming.received
+            emit(
                 mapOf(
-                    "type" to "file_received",
-                    "path" to destFile.absolutePath,
-                    "title" to meta.optString("title", ""),
-                    "artist" to meta.optString("artist", ""),
-                    "durationMs" to meta.optLong("durationMs", 0L),
+                    "type" to "file_progress",
+                    "transferId" to incoming.transferId,
+                    "received" to incoming.received,
+                    "total" to incoming.size,
+                    "head" to incoming.head,
+                    "tailFrom" to incoming.tailFrom,
+                    "tailEnd" to incoming.tailEnd,
                     "address" to conn.address
                 )
             )
         }
+        if (done) finishIncomingFile(conn, incoming)
     }
 
-    // Arma la metadata y manda el archivo por [conn] — la parte compartida
-    // entre mandarlo a todos (sendSongFile) y a uno solo (sendSongFileTo,
-    // para un invitado que se conecta después de que ya se mandó la
-    // canción al resto).
+    private fun finishIncomingFile(conn: Connection, incoming: IncomingFile) {
+        try { incoming.raf.close() } catch (_: Exception) {}
+        conn.incoming = null
+        emit(
+            mapOf(
+                "type" to "file_received",
+                "transferId" to incoming.transferId,
+                "path" to incoming.file.absolutePath,
+                "title" to incoming.meta.optString("title", ""),
+                "artist" to incoming.meta.optString("artist", ""),
+                "durationMs" to incoming.meta.optLong("durationMs", 0L),
+                "meta" to incoming.meta.toString(),
+                "address" to conn.address
+            )
+        )
+    }
+
+    private fun abortIncomingFile(conn: Connection) {
+        val incoming = conn.incoming ?: return
+        conn.incoming = null
+        try { incoming.raf.close() } catch (_: Exception) {}
+        incoming.file.delete()
+        emit(
+            mapOf(
+                "type" to "file_aborted",
+                "transferId" to incoming.transferId,
+                "address" to conn.address
+            )
+        )
+    }
+
+    private fun writeFrame(conn: Connection, type: Int, payload: ByteArray) {
+        synchronized(conn) {
+            conn.output.writeByte(type)
+            conn.output.writeInt(payload.size)
+            conn.output.write(payload)
+            conn.output.flush()
+        }
+    }
+
+    // Manda un archivo a UN invitado, en trozos: primero los últimos
+    // [TAIL_SIZE] bytes y después el resto en orden. Tira IOException
+    // ("CANCELLED") si Dart pidió cancelarlo con cancelTransfer — p. ej. el
+    // anfitrión saltó a otra canción y esa tiene que llegar primero.
     private fun writeSongFileTo(
         conn: Connection,
         path: String,
         title: String,
         artist: String?,
-        durationMs: Long?
+        durationMs: Long?,
+        transferId: String,
+        extraJson: String?
     ) {
-        val file = File(path)
-        val meta = JSONObject().apply {
-            put("fileName", file.name)
-            put("fileSize", file.length())
-            put("title", title)
-            put("artist", artist)
-            put("durationMs", durationMs ?: 0L)
-        }
-        val metaBytes = meta.toString().toByteArray(Charsets.UTF_8)
-        synchronized(conn) {
-            conn.output.writeByte(2)
-            conn.output.writeInt(metaBytes.size)
-            conn.output.write(metaBytes)
-            conn.output.flush()
+        synchronized(conn.fileLock) {
+            conn.cancelOutgoing = false
+            val file = File(path)
+            val total = file.length()
+            val meta = JSONObject().apply {
+                put("transferId", transferId)
+                put("fileName", file.name)
+                put("fileSize", total)
+                put("title", title)
+                put("artist", artist ?: "")
+                put("durationMs", durationMs ?: 0L)
+                if (!extraJson.isNullOrEmpty()) put("extra", JSONObject(extraJson))
+            }
+            writeFrame(conn, FRAME_FILE_START, meta.toString().toByteArray(Charsets.UTF_8))
 
-            file.inputStream().use { input ->
-                val buffer = ByteArray(16 * 1024)
-                var sent = 0L
-                val total = file.length()
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    conn.output.write(buffer, 0, read)
-                    sent += read
-                    if (sent % (256 * 1024) < buffer.size) {
-                        val progress = sent
-                        activity.runOnUiThread {
-                            eventSink?.success(
+            val ranges = if (total > 2 * TAIL_SIZE) {
+                listOf((total - TAIL_SIZE) to total, 0L to (total - TAIL_SIZE))
+            } else {
+                listOf(0L to total)
+            }
+            val buffer = ByteArray(CHUNK_SIZE)
+            var sent = 0L
+            var lastEmitted = 0L
+            RandomAccessFile(file, "r").use { raf ->
+                for ((start, end) in ranges) {
+                    var offset = start
+                    while (offset < end) {
+                        if (conn.cancelOutgoing) {
+                            writeFrame(conn, FRAME_FILE_ABORT, transferId.toByteArray(Charsets.UTF_8))
+                            throw IOException("CANCELLED")
+                        }
+                        val n = minOf(CHUNK_SIZE.toLong(), end - offset).toInt()
+                        raf.seek(offset)
+                        raf.readFully(buffer, 0, n)
+                        synchronized(conn) {
+                            conn.output.writeByte(FRAME_FILE_CHUNK)
+                            conn.output.writeInt(n + 8)
+                            conn.output.writeLong(offset)
+                            conn.output.write(buffer, 0, n)
+                            conn.output.flush()
+                        }
+                        offset += n
+                        sent += n
+                        if (sent == total || sent - lastEmitted >= PROGRESS_STEP) {
+                            lastEmitted = sent
+                            emit(
                                 mapOf(
-                                    "type" to "send_progress", "sent" to progress,
-                                    "total" to total, "address" to conn.address
+                                    "type" to "send_progress",
+                                    "transferId" to transferId,
+                                    "sent" to sent,
+                                    "total" to total,
+                                    "address" to conn.address
                                 )
                             )
                         }
                     }
                 }
-                conn.output.flush()
             }
         }
     }
 
-    // Manda el archivo a TODOS los invitados conectados en paralelo (un
-    // hilo por invitado, cada uno con su propio socket — no se serializa
-    // artificialmente más de lo que ya limita el radio Bluetooth
-    // compartido). [result] se resuelve cuando todos terminaron (o al
-    // primer error).
-    private fun sendSongFile(
-        path: String,
-        title: String,
-        artist: String?,
-        durationMs: Long?,
-        result: MethodChannel.Result
-    ) {
-        val targets = connections.values.toList()
-        if (targets.isEmpty()) {
-            result.error("NOT_CONNECTED", "No hay invitados conectados", null)
-            return
-        }
-        thread {
-            val latch = CountDownLatch(targets.size)
-            var lastError: Exception? = null
-
-            for (conn in targets) {
-                thread {
-                    try {
-                        writeSongFileTo(conn, path, title, artist, durationMs)
-                    } catch (e: Exception) {
-                        lastError = e
-                    } finally {
-                        latch.countDown()
-                    }
-                }
-            }
-            latch.await()
-            activity.runOnUiThread {
-                if (lastError == null) result.success(null)
-                else result.error("SEND_FAILED", lastError?.message, null)
-            }
-        }
-    }
-
-    // Manda el archivo a UN SOLO invitado — hace falta cuando alguien se
-    // conecta después de que ya se mandó la canción al resto (p. ej. tras
-    // "Empezar con los que ya están"): reenviar con sendSongFile() de
-    // nuevo le volvería a mandar el archivo también a los que ya lo tienen
-    // y ya están sincronizando el reloj, interrumpiéndolos sin necesidad.
     private fun sendSongFileTo(
         address: String,
         path: String,
         title: String,
         artist: String?,
         durationMs: Long?,
+        transferId: String,
+        extraJson: String?,
         result: MethodChannel.Result
     ) {
         val conn = connections[address]
@@ -535,10 +693,11 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
         }
         thread {
             try {
-                writeSongFileTo(conn, path, title, artist, durationMs)
+                writeSongFileTo(conn, path, title, artist, durationMs, transferId, extraJson)
                 activity.runOnUiThread { result.success(null) }
             } catch (e: Exception) {
-                activity.runOnUiThread { result.error("SEND_FAILED", e.message, null) }
+                val code = if (e.message == "CANCELLED") "CANCELLED" else "SEND_FAILED"
+                activity.runOnUiThread { result.error(code, e.message, null) }
             }
         }
     }
@@ -558,12 +717,7 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
             var lastError: Exception? = null
             for (conn in targets) {
                 try {
-                    synchronized(conn) {
-                        conn.output.writeByte(1)
-                        conn.output.writeInt(bytes.size)
-                        conn.output.write(bytes)
-                        conn.output.flush()
-                    }
+                    writeFrame(conn, FRAME_CONTROL, bytes)
                 } catch (e: Exception) {
                     lastError = e
                 }
@@ -589,12 +743,7 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
         thread {
             try {
                 val bytes = json.toByteArray(Charsets.UTF_8)
-                synchronized(conn) {
-                    conn.output.writeByte(1)
-                    conn.output.writeInt(bytes.size)
-                    conn.output.write(bytes)
-                    conn.output.flush()
-                }
+                writeFrame(conn, FRAME_CONTROL, bytes)
                 activity.runOnUiThread { result.success(null) }
             } catch (e: Exception) {
                 activity.runOnUiThread { result.error("SEND_FAILED", e.message, null) }
@@ -607,6 +756,7 @@ class BluetoothSyncBridge(private val activity: MainActivity) {
         try { serverSocket?.close() } catch (_: Exception) {}
         serverSocket = null
         for (conn in connections.values.toList()) {
+            conn.cancelOutgoing = true
             try { conn.socket.close() } catch (_: Exception) {}
         }
         connections.clear()

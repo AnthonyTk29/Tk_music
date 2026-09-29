@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:meta/meta.dart';
 
 @immutable
 class Song {
@@ -27,6 +27,23 @@ class Song {
   /// Género leído de las etiquetas ID3 del archivo, si tiene. Muchos MP3
   /// no lo traen, así que puede venir vacío o inconsistente.
   final String? genre;
+
+  Song copyWith({
+    String? title,
+    String? artist,
+    String? album,
+    String? genre,
+  }) =>
+      Song(
+        mediaStoreId: mediaStoreId,
+        title: title ?? this.title,
+        filePath: filePath,
+        artist: artist ?? this.artist,
+        album: album ?? this.album,
+        duration: duration,
+        dateAdded: dateAdded,
+        genre: genre ?? this.genre,
+      );
 
   @override
   bool operator ==(Object other) =>

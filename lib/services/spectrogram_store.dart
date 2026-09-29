@@ -105,9 +105,8 @@ class SpectrogramStore {
 
   SpectrogramData _parse(Map<dynamic, dynamic> raw) {
     final frames = (raw['frames'] as List<dynamic>)
-        .map((frame) => (frame as List<dynamic>)
-            .map((v) => (v as num).toDouble())
-            .toList())
+        .map((frame) =>
+            (frame as List<dynamic>).map((v) => (v as num).toDouble()).toList())
         .toList();
     final frameStepMs = (raw['frameStepMs'] as num).toInt();
     return SpectrogramData(frames: frames, frameStepMs: frameStepMs);

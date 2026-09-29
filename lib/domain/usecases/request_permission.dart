@@ -1,4 +1,4 @@
-import 'package:tk_music/core/errors/failures.dart';
+import 'package:tk_music/domain/failures/failures.dart';
 
 import '../repositories/song_repository.dart';
 

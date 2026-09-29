@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:tk_music/presentation/widgets/app_header.dart';
+import 'package:tk_music/presentation/widgets/scrollable_fill.dart';
 import 'package:tk_music/domain/entities/profile.dart';
 import 'package:tk_music/presentation/widgets/app_providers.dart';
 
@@ -68,52 +70,55 @@ class _ProfilePickerScreenState extends State<ProfilePickerScreen> {
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Column(
-            children: [
-              const Spacer(),
-              Icon(Icons.library_music_rounded,
-                  size: 64, color: theme.colorScheme.primary),
-              const SizedBox(height: 16),
-              Text('¿Quién escucha?', style: theme.textTheme.headlineSmall),
-              const SizedBox(height: 32),
-              if (provider.profiles.isEmpty)
-                Text(
-                  'Todavía no hay perfiles en este dispositivo.',
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                  textAlign: TextAlign.center,
-                )
-              else
-                Wrap(
-                  spacing: 16,
-                  runSpacing: 16,
-                  alignment: WrapAlignment.center,
-                  children: provider.profiles
-                      .map((p) => _ProfileAvatar(
-                            profile: p,
-                            onTap: _busy ? null : () => _choose(p),
-                          ))
-                      .toList(),
+          // Ventanas bajas: se desplaza en vez de desbordar.
+          child: ScrollableFill(
+            child: Column(
+              children: [
+                const Spacer(),
+                const AppHeaderTitle(large: true),
+                const SizedBox(height: 28),
+                Text('¿Quién escucha?', style: theme.textTheme.headlineSmall),
+                const SizedBox(height: 32),
+                if (provider.profiles.isEmpty)
+                  Text(
+                    'Todavía no hay perfiles en este dispositivo.',
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                    textAlign: TextAlign.center,
+                  )
+                else
+                  Wrap(
+                    spacing: 16,
+                    runSpacing: 16,
+                    alignment: WrapAlignment.center,
+                    children: provider.profiles
+                        .map((p) => _ProfileAvatar(
+                              profile: p,
+                              onTap: _busy ? null : () => _choose(p),
+                            ))
+                        .toList(),
+                  ),
+                const SizedBox(height: 24),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _createAndChoose,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Crear perfil'),
                 ),
-              const SizedBox(height: 24),
-              OutlinedButton.icon(
-                onPressed: _busy ? null : _createAndChoose,
-                icon: const Icon(Icons.add),
-                label: const Text('Crear perfil'),
-              ),
-              const Spacer(),
-              CheckboxListTile(
-                value: _rememberMe,
-                onChanged: _busy
-                    ? null
-                    : (value) => setState(() => _rememberMe = value ?? true),
-                title: const Text('Recordarme'),
-                subtitle: const Text('No volver a preguntar en este dispositivo'),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
-              const SizedBox(height: 16),
-            ],
+                const Spacer(),
+                CheckboxListTile(
+                  value: _rememberMe,
+                  onChanged: _busy
+                      ? null
+                      : (value) => setState(() => _rememberMe = value ?? true),
+                  title: const Text('Recordarme'),
+                  subtitle:
+                      const Text('No volver a preguntar en este dispositivo'),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
           ),
         ),
       ),
@@ -130,7 +135,8 @@ class _ProfileAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final initial = profile.name.isNotEmpty ? profile.name[0].toUpperCase() : '?';
+    final initial =
+        profile.name.isNotEmpty ? profile.name[0].toUpperCase() : '?';
 
     return InkWell(
       onTap: onTap,

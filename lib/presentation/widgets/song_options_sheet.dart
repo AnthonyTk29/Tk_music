@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:tk_music/core/utils/formatters.dart';
 import 'package:tk_music/domain/entities/playlist.dart';
+import 'package:tk_music/presentation/pages/tag_editor_screen.dart';
 import 'package:tk_music/presentation/widgets/song_artwork.dart';
 import 'package:tk_music/services/favorites_store.dart';
 import 'package:tk_music/services/playlist_store.dart';
@@ -43,8 +44,7 @@ void showSongOptionsSheet(
             builder: (context, snapshot) {
               final liked = snapshot.data ?? false;
               return ListTile(
-                leading:
-                    Icon(liked ? Icons.thumb_up : Icons.thumb_up_outlined),
+                leading: Icon(liked ? Icons.thumb_up : Icons.thumb_up_outlined),
                 title: Text(liked ? 'Quitar de favoritos' : 'Me gusta'),
                 onTap: () {
                   Navigator.of(context).pop();
@@ -55,10 +55,22 @@ void showSongOptionsSheet(
           ),
           ListTile(
             leading: const Icon(Icons.playlist_add),
-            title: const Text('Agregar a playlist'),
+            title: const Text('Agregar a una lista'),
             onTap: () {
               Navigator.of(context).pop();
               _showAddToPlaylist(context, mediaStoreId);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.edit_outlined),
+            title: const Text('Editar información'),
+            subtitle: const Text('Título, artista, álbum y carátula'),
+            onTap: () {
+              final navigator = Navigator.of(context);
+              navigator.pop();
+              navigator.push(MaterialPageRoute(
+                builder: (_) => TagEditorScreen(songId: mediaStoreId),
+              ));
             },
           ),
           ListTile(
@@ -104,13 +116,13 @@ void _showAddToPlaylist(BuildContext context, int mediaStoreId) {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: Text('Agregar a playlist',
+                child: Text('Agregar a una lista',
                     style: Theme.of(context).textTheme.titleMedium),
               ),
               if (playlists.isEmpty)
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Text('Todavía no tienes playlists'),
+                  child: Text('Todavía no tenés listas'),
                 ),
               for (final playlist in playlists)
                 ListTile(
@@ -126,13 +138,14 @@ void _showAddToPlaylist(BuildContext context, int mediaStoreId) {
                 ),
               ListTile(
                 leading: const Icon(Icons.add),
-                title: const Text('Nueva playlist'),
+                title: const Text('Nueva lista'),
                 onTap: () async {
                   Navigator.of(context).pop();
                   final name = await _promptPlaylistName(context);
                   if (name == null || name.isEmpty) return;
                   final playlist = await PlaylistStore.instance.create(name);
-                  await PlaylistStore.instance.addSong(playlist.id, mediaStoreId);
+                  await PlaylistStore.instance
+                      .addSong(playlist.id, mediaStoreId);
                 },
               ),
             ],
@@ -148,7 +161,7 @@ Future<String?> _promptPlaylistName(BuildContext context) {
   return showDialog<String>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Nueva playlist'),
+      title: const Text('Nueva lista'),
       content: TextField(
         controller: controller,
         autofocus: true,
@@ -222,7 +235,8 @@ void _showSongDetails(
               _DetailRow(label: 'Álbum', value: album ?? 'Desconocido'),
               _DetailRow(
                 label: 'Duración',
-                value: duration != null ? formatDuration(duration) : 'Desconocida',
+                value:
+                    duration != null ? formatDuration(duration) : 'Desconocida',
               ),
               _DetailRow(label: 'Archivo', value: filePath),
             ],

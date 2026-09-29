@@ -11,13 +11,25 @@ import 'package:tk_music/presentation/widgets/song_artwork.dart';
 import 'package:tk_music/services/recent_songs_store.dart';
 
 const _maxTotalShortcuts = 24;
-const _itemsPerPage = 9;
-const _crossAxisCount = 3;
+const _spacing = 8.0;
+
+/// Tamaño máximo de cada acceso: en pantallas anchas (desktop, tablets)
+/// entran más columnas en vez de agrandar las carátulas.
+const _maxTileSize = 180.0;
+
+/// Columnas y filas por página según el ancho: 3×3 en un teléfono; en
+/// pantallas anchas, las columnas que entren con carátulas de hasta
+/// [_maxTileSize] y 2 filas.
+({int columns, int rows}) quickAccessLayout(double width) {
+  final columns =
+      math.max(3, ((width + _spacing) / (_maxTileSize + _spacing)).ceil());
+  return (columns: columns, rows: columns > 3 ? 2 : 3);
+}
 
 /// Cuadrícula de "Accesos directos": las últimas canciones reproducidas,
 /// para volver a ponerlas con un solo toque (al estilo YouTube Music).
-/// Se pagina de a 9 (3x3) cuando hay más; se oculta sola si todavía no se
-/// reprodujo nada en este dispositivo.
+/// Se pagina (de a 9 en un teléfono, ver [quickAccessLayout]) cuando hay
+/// más; se oculta sola si todavía no se reprodujo nada en este dispositivo.
 class QuickAccessSection extends StatelessWidget {
   const QuickAccessSection({super.key});
 
@@ -69,15 +81,16 @@ class _QuickAccessGridState extends State<_QuickAccessGrid> {
   final _controller = PageController();
   int _page = 0;
 
-  int get _pageCount => (widget.songs.length / _itemsPerPage).ceil();
+  int _pageCount(int perPage) => (widget.songs.length / perPage).ceil();
 
-  /// Filas que ocupa una página concreta: 1 si tiene hasta 3 accesos, 2 hasta
-  /// 6, 3 con 7 a 9. Así la sección crece de a poco en vez de reservar
-  /// siempre el alto máximo.
-  int _rowsForPage(int page) {
-    final start = page * _itemsPerPage;
-    final count = math.min(_itemsPerPage, widget.songs.length - start);
-    return (count / _crossAxisCount).ceil().clamp(1, 3);
+  /// Filas que ocupa una página concreta (en un teléfono: 1 si tiene hasta
+  /// 3 accesos, 2 hasta 6, 3 con 7 a 9). Así la sección crece de a poco en
+  /// vez de reservar siempre el alto máximo.
+  int _rowsForPage(int page, int columns, int maxRows) {
+    final perPage = columns * maxRows;
+    final start = page * perPage;
+    final count = math.min(perPage, widget.songs.length - start);
+    return (count / columns).ceil().clamp(1, maxRows);
   }
 
   @override
@@ -91,7 +104,8 @@ class _QuickAccessGridState extends State<_QuickAccessGrid> {
     super.didUpdateWidget(oldWidget);
     // Si la lista se achica (p. ej. se depuró el historial) y la página
     // actual ya no existe, se vuelve a la primera para no quedar en blanco.
-    if (_page >= _pageCount) {
+    // (Se revisa con el mínimo de accesos por página, el de un teléfono.)
+    if (_page >= _pageCount(9)) {
       _page = 0;
       if (_controller.hasClients) _controller.jumpToPage(0);
     }
@@ -99,84 +113,84 @@ class _QuickAccessGridState extends State<_QuickAccessGrid> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final pageCount = _pageCount;
-    final currentPage = _page.clamp(0, pageCount - 1);
-    final rows = _rowsForPage(currentPage);
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Accesos directos', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 10),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              const spacing = 8.0;
-              final tileSize =
-                  (constraints.maxWidth - spacing * (_crossAxisCount - 1)) /
-                      _crossAxisCount;
-              final gridHeight = rows * tileSize + (rows - 1) * spacing;
+      child: LayoutBuilder(
+        builder: (context, constraints) =>
+            _buildForWidth(context, constraints.maxWidth),
+      ),
+    );
+  }
 
-              return AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOut,
-                height: gridHeight,
-                child: PageView.builder(
-                  controller: _controller,
-                  itemCount: pageCount,
-                  onPageChanged: (page) => setState(() => _page = page),
-                  itemBuilder: (context, pageIndex) {
-                    final start = pageIndex * _itemsPerPage;
-                    final end = math.min(
-                        start + _itemsPerPage, widget.songs.length);
-                    final pageSongs = widget.songs.sublist(start, end);
+  Widget _buildForWidth(BuildContext context, double width) {
+    final theme = Theme.of(context);
+    final layout = quickAccessLayout(width);
+    final columns = layout.columns;
+    final perPage = columns * layout.rows;
+    final pageCount = _pageCount(perPage);
+    final currentPage = _page.clamp(0, pageCount - 1);
+    final rows = _rowsForPage(currentPage, columns, layout.rows);
+    final tileSize = (width - _spacing * (columns - 1)) / columns;
+    final gridHeight = rows * tileSize + (rows - 1) * _spacing;
 
-                    return GridView.builder(
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: _crossAxisCount,
-                        mainAxisSpacing: spacing,
-                        crossAxisSpacing: spacing,
-                        childAspectRatio: 1,
-                      ),
-                      itemCount: pageSongs.length,
-                      itemBuilder: (context, index) => _ShortcutTile(
-                        song: pageSongs[index],
-                        size: tileSize,
-                      ),
-                    );
-                  },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Accesos directos', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 10),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          height: gridHeight,
+          child: PageView.builder(
+            controller: _controller,
+            itemCount: pageCount,
+            onPageChanged: (page) => setState(() => _page = page),
+            itemBuilder: (context, pageIndex) {
+              final start = pageIndex * perPage;
+              final end = math.min(start + perPage, widget.songs.length);
+              final pageSongs = widget.songs.sublist(start, end);
+
+              return GridView.builder(
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: columns,
+                  mainAxisSpacing: _spacing,
+                  crossAxisSpacing: _spacing,
+                  childAspectRatio: 1,
+                ),
+                itemCount: pageSongs.length,
+                itemBuilder: (context, index) => _ShortcutTile(
+                  song: pageSongs[index],
+                  size: tileSize,
                 ),
               );
             },
           ),
-          if (pageCount > 1) ...[
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(pageCount, (i) {
-                final active = i == currentPage;
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  margin: const EdgeInsets.symmetric(horizontal: 3),
-                  width: active ? 16 : 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: active
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.onSurfaceVariant
-                            .withValues(alpha: 0.35),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                );
-              }),
-            ),
-          ],
+        ),
+        if (pageCount > 1) ...[
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(pageCount, (i) {
+              final active = i == currentPage;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: active ? 16 : 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: active
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant
+                          .withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              );
+            }),
+          ),
         ],
-      ),
+      ],
     );
   }
 }

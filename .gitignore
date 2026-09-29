@@ -43,3 +43,11 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 android/key.properties
+
+# Binarios publicados en la landing page (se copian desde build/installer)
+/landing/descargas/
+
+# SDK de mpv suelto (no lo usa el build: media_kit baja su propio libmpv)
+/libmpv-2.dll
+/libmpv.dll.a
+/include/mpv/

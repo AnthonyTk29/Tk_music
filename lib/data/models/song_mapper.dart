@@ -1,8 +1,8 @@
-import 'package:audio_service/audio_service.dart';
 import 'package:on_audio_query_forked/on_audio_query.dart';
 
 import 'package:tk_music/domain/entities/song.dart';
 
+/// Pasa una canción de MediaStore (on_audio_query) a la del dominio.
 class SongMapper {
   const SongMapper._();
 
@@ -20,15 +20,7 @@ class SongMapper {
         dateAdded: model.dateAdded != null
             ? DateTime.fromMillisecondsSinceEpoch(model.dateAdded! * 1000)
             : null,
-        genre: (model.genre?.trim().isEmpty ?? true) ? null : model.genre!.trim(),
-      );
-
-  static MediaItem toMediaItem(Song song) => MediaItem(
-        id: song.filePath,
-        title: song.title,
-        artist: song.artist,
-        album: song.album,
-        duration: song.duration,
-        extras: {'songId': song.mediaStoreId},
+        genre:
+            (model.genre?.trim().isEmpty ?? true) ? null : model.genre!.trim(),
       );
 }

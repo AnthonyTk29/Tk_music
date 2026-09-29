@@ -87,21 +87,21 @@ VS_VERSION_INFO VERSIONINFO
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
-        BLOCK "040904e4"
+        BLOCK "0c0a04e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "tk_music" "\0"
+            VALUE "CompanyName", "TK Music" "\0"
+            VALUE "FileDescription", "TK Music" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "tk_music" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 TK Music" "\0"
             VALUE "OriginalFilename", "tk_music.exe" "\0"
-            VALUE "ProductName", "tk_music" "\0"
+            VALUE "ProductName", "TK Music" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
     BLOCK "VarFileInfo"
     BEGIN
-        VALUE "Translation", 0x409, 1252
+        VALUE "Translation", 0xc0a, 1252
     END
 END
 

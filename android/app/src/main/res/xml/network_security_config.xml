@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HTTP sin cifrar SOLO hacia el propio teléfono: "Sincronizar con otro
+     dispositivo" reproduce la canción mientras llega por Bluetooth a través
+     de un servidor local en 127.0.0.1 (SyncStreamServer). Todo lo demás
+     sigue exigiendo HTTPS. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

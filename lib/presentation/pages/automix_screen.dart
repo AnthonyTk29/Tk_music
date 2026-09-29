@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:tk_music/presentation/widgets/app_header.dart';
+import 'package:tk_music/presentation/widgets/artwork_backdrop.dart';
 import 'package:tk_music/domain/entities/playlist.dart';
 import 'package:tk_music/domain/entities/song.dart';
 import 'package:tk_music/presentation/widgets/app_providers.dart';
@@ -34,7 +36,8 @@ class _AutomixScreenState extends State<AutomixScreen> {
   final _engine = AutomixEngine.instance;
   late final Future<List<Playlist>> _playlistsFuture;
   Playlist? _selectedPlaylist;
-  bool _shuffle = true;
+  bool _shuffle = false;
+  bool _smartOrder = true;
 
   @override
   void initState() {
@@ -45,7 +48,8 @@ class _AutomixScreenState extends State<AutomixScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Mezclador automático')),
+      appBar:
+          AppBar(title: const AppHeaderTitle(section: 'Mezclador automático')),
       body: AnimatedBuilder(
         animation: _engine,
         builder: (context, _) {
@@ -54,12 +58,26 @@ class _AutomixScreenState extends State<AutomixScreen> {
               playlistsFuture: _playlistsFuture,
               selectedPlaylist: _selectedPlaylist,
               shuffle: _shuffle,
+              smartOrder: _smartOrder,
               onPlaylistChanged: (p) => setState(() => _selectedPlaylist = p),
-              onShuffleChanged: (v) => setState(() => _shuffle = v),
+              onShuffleChanged: (v) => setState(() {
+                _shuffle = v;
+                if (v) _smartOrder = false;
+              }),
+              onSmartOrderChanged: (v) => setState(() {
+                _smartOrder = v;
+                if (v) _shuffle = false;
+              }),
               onStart: _start,
             );
           }
-          return _MixingView(engine: _engine, onStop: _stopAndReset);
+          if (_engine.status == AutomixStatus.analyzing) {
+            return _AnalyzingView(engine: _engine, onCancel: _stopAndReset);
+          }
+          return ArtworkGradient(
+            songId: _engine.currentSong?.mediaStoreId,
+            child: _MixingView(engine: _engine, onStop: _stopAndReset),
+          );
         },
       ),
     );
@@ -71,14 +89,12 @@ class _AutomixScreenState extends State<AutomixScreen> {
 
     final allSongs = AppProviders.songOf(context).songs;
     final byId = {for (final s in allSongs) s.mediaStoreId: s};
-    final queue = playlist.songIds
-        .map((id) => byId[id])
-        .whereType<Song>()
-        .toList();
+    final queue =
+        playlist.songIds.map((id) => byId[id]).whereType<Song>().toList();
     if (_shuffle) queue.shuffle();
     if (queue.isEmpty) return;
 
-    await _engine.start(queue);
+    await _engine.start(queue, smartOrder: _smartOrder);
   }
 
   Future<void> _stopAndReset() async {
@@ -92,16 +108,20 @@ class _SetupView extends StatelessWidget {
     required this.playlistsFuture,
     required this.selectedPlaylist,
     required this.shuffle,
+    required this.smartOrder,
     required this.onPlaylistChanged,
     required this.onShuffleChanged,
+    required this.onSmartOrderChanged,
     required this.onStart,
   });
 
   final Future<List<Playlist>> playlistsFuture;
   final Playlist? selectedPlaylist;
   final bool shuffle;
+  final bool smartOrder;
   final ValueChanged<Playlist?> onPlaylistChanged;
   final ValueChanged<bool> onShuffleChanged;
+  final ValueChanged<bool> onSmartOrderChanged;
   final VoidCallback onStart;
 
   @override
@@ -121,11 +141,11 @@ class _SetupView extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.graphic_eq,
+                  Icon(Icons.auto_mode,
                       size: 40, color: theme.colorScheme.onSurfaceVariant),
                   const SizedBox(height: 12),
                   Text(
-                    'Creá una playlist primero: el Mezclador automático '
+                    'Creá una lista de reproducción primero: el Mezclador automático '
                     'arma la sesión a partir de una.',
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodyMedium
@@ -151,7 +171,7 @@ class _SetupView extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Playlist a mezclar', style: theme.textTheme.titleMedium),
+              Text('Lista a mezclar', style: theme.textTheme.titleMedium),
               const SizedBox(height: 8),
               DropdownButtonFormField<Playlist>(
                 value: current,
@@ -168,6 +188,15 @@ class _SetupView extends StatelessWidget {
               const SizedBox(height: 8),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
+                title: const Text('Orden inteligente'),
+                subtitle: const Text(
+                    'Arma el set como un DJ: tempos y tonalidades que '
+                    'combinan y energía que sube de a poco'),
+                value: smartOrder,
+                onChanged: onSmartOrderChanged,
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
                 title: const Text('Orden aleatorio'),
                 value: shuffle,
                 onChanged: onShuffleChanged,
@@ -175,18 +204,16 @@ class _SetupView extends StatelessWidget {
               const SizedBox(height: 16),
               Text(
                 'Se ajusta automáticamente el volumen de cada canción según '
-                'su sonoridad real, así los cruces no se sienten más fuertes '
-                'ni más flojos de golpe. La primera vez que suena cada '
-                'canción tarda unos segundos en analizarse; después queda '
-                'guardado.',
+                'su sonoridad real, y los cruces caen sobre el pulso con los '
+                'tempos emparejados. La primera vez cada canción tarda unos '
+                'segundos en analizarse; después queda guardado.',
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
-                onPressed: current == null || current.songIds.isEmpty
-                    ? null
-                    : onStart,
+                onPressed:
+                    current == null || current.songIds.isEmpty ? null : onStart,
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('Empezar mezcla automática'),
               ),
@@ -217,7 +244,7 @@ class _MixingView extends StatelessWidget {
             Icon(Icons.check_circle_outline,
                 size: 40, color: theme.colorScheme.onSurfaceVariant),
             const SizedBox(height: 12),
-            const Text('Se terminó la playlist'),
+            const Text('Se terminó la lista'),
             const SizedBox(height: 16),
             FilledButton.icon(
               onPressed: onStop,
@@ -280,6 +307,15 @@ class _NowPlayingHeader extends StatelessWidget {
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        if (engine.featuresOf(current)?.summary.isNotEmpty ?? false)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              engine.featuresOf(current)!.summary,
+              style: theme.textTheme.labelMedium
+                  ?.copyWith(color: theme.colorScheme.primary),
+            ),
           ),
         const SizedBox(height: 10),
         StreamBuilder<Duration>(
@@ -387,16 +423,57 @@ class _UpcomingList extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                subtitle: song.artist != null
-                    ? Text(song.artist!,
-                        maxLines: 1, overflow: TextOverflow.ellipsis)
-                    : null,
+                subtitle: Text(
+                  [
+                    song.artist,
+                    engine.featuresOf(song)?.summary,
+                  ].whereType<String>().where((s) => s.isNotEmpty).join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 trailing: const Icon(Icons.drag_handle),
               );
             },
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Mientras se analiza el ritmo y la tonalidad de la playlist para el orden
+/// inteligente (solo la primera vez: después queda guardado).
+class _AnalyzingView extends StatelessWidget {
+  const _AnalyzingView({required this.engine, required this.onCancel});
+
+  final AutomixEngine engine;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final total = engine.analyzeTotal;
+    final done = engine.analyzedCount;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.auto_awesome,
+                size: 40, color: theme.colorScheme.primary),
+            const SizedBox(height: 12),
+            Text('Analizando ritmo y tonalidad…',
+                style: theme.textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text('$done de $total canciones', style: theme.textTheme.bodySmall),
+            const SizedBox(height: 16),
+            LinearProgressIndicator(value: total == 0 ? null : done / total),
+            const SizedBox(height: 16),
+            OutlinedButton(onPressed: onCancel, child: const Text('Cancelar')),
+          ],
+        ),
+      ),
     );
   }
 }

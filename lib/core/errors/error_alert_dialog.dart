@@ -23,7 +23,8 @@ class ErrorAlertDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isWarning = exception.severity == AppErrorSeverity.warning;
-    final accent = isWarning ? const Color(0xFFE0972A) : const Color(0xFFE0453A);
+    final accent =
+        isWarning ? const Color(0xFFE0972A) : const Color(0xFFE0453A);
 
     return AlertDialog(
       icon: Icon(

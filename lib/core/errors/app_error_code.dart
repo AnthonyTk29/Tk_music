@@ -8,6 +8,7 @@ enum AppErrorSeverity { warning, error }
 enum AppErrorCategory {
   permission,
   bluetooth,
+  network,
   playback,
   storage,
   analysis,
@@ -31,12 +32,17 @@ enum AppErrorCode {
   btSendFailed(AppErrorCategory.bluetooth, AppErrorSeverity.warning),
   btCapacityUnavailable(AppErrorCategory.bluetooth, AppErrorSeverity.warning),
 
+  // ---- Wi-Fi (misma sesión de sincronizar, por la red) ----
+  wifiHostFailed(AppErrorCategory.network, AppErrorSeverity.error),
+  wifiConnectFailed(AppErrorCategory.network, AppErrorSeverity.error),
+
   // ---- Almacenamiento / SAF / WhatsApp ----
   storageSourceNotFound(AppErrorCategory.storage, AppErrorSeverity.error),
   storageImportFailed(AppErrorCategory.storage, AppErrorSeverity.error),
   storagePickFailed(AppErrorCategory.storage, AppErrorSeverity.warning),
   storageBusy(AppErrorCategory.storage, AppErrorSeverity.warning),
-  storagePermissionDenied(AppErrorCategory.permission, AppErrorSeverity.warning),
+  storagePermissionDenied(
+      AppErrorCategory.permission, AppErrorSeverity.warning),
 
   // ---- Análisis nativo (onda / espectro / loudness) ----
   analysisFailed(AppErrorCategory.analysis, AppErrorSeverity.warning),
@@ -52,7 +58,8 @@ enum AppErrorCode {
 
   // ---- Biblioteca / permisos de medios ----
   libraryLoadFailed(AppErrorCategory.library, AppErrorSeverity.error),
-  libraryPermissionDenied(AppErrorCategory.permission, AppErrorSeverity.warning),
+  libraryPermissionDenied(
+      AppErrorCategory.permission, AppErrorSeverity.warning),
 
   // ---- Genérico: cualquier excepción no traducida a propósito cae acá,
   // nunca se pierde un error por no tener código específico todavía. ----

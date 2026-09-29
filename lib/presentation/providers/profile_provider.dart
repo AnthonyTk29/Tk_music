@@ -40,7 +40,8 @@ class ProfileProvider extends ChangeNotifier {
     return profile;
   }
 
-  Future<void> selectProfile(Profile profile, {required bool rememberMe}) async {
+  Future<void> selectProfile(Profile profile,
+      {required bool rememberMe}) async {
     final repo = sl<ProfileRepository>();
     if (rememberMe) {
       await repo.rememberProfile(profile);

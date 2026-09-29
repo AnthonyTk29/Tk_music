@@ -2,13 +2,14 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 
 import 'package:tk_music/core/di/service_locator.dart';
-import 'package:tk_music/data/models/song_mapper.dart';
+import 'package:tk_music/services/media_item_mapper.dart';
 import 'package:tk_music/domain/entities/playlist.dart';
 import 'package:tk_music/domain/entities/song.dart';
 import 'package:tk_music/presentation/widgets/alphabet_index_bar.dart';
+import 'package:tk_music/presentation/widgets/app_header.dart';
 import 'package:tk_music/presentation/widgets/app_providers.dart';
 import 'package:tk_music/presentation/widgets/song_artwork.dart';
-import 'package:tk_music/services/audio_handler.dart';
+import 'package:tk_music/services/queue_capable_handler.dart';
 import 'package:tk_music/services/playlist_store.dart';
 
 class PlaylistDetailScreen extends StatelessWidget {
@@ -43,8 +44,8 @@ class PlaylistDetailScreen extends StatelessWidget {
             if (playlist == null) {
               // Se borró (p. ej. desde otra pantalla) mientras esta estaba abierta.
               return Scaffold(
-                appBar: AppBar(),
-                body: const Center(child: Text('Esta playlist ya no existe')),
+                appBar: AppBar(title: const AppHeaderTitle()),
+                body: const Center(child: Text('Esta lista ya no existe')),
               );
             }
 
@@ -65,31 +66,31 @@ class _PlaylistDetailBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final songProvider = AppProviders.songOf(context);
     final byId = {for (final s in songProvider.songs) s.mediaStoreId: s};
-    final songs = playlist.songIds
-        .map((id) => byId[id])
-        .whereType<Song>()
-        .toList();
+    final songs =
+        playlist.songIds.map((id) => byId[id]).whereType<Song>().toList();
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(playlist.name),
+        title: AppHeaderTitle(section: playlist.name),
         actions: [
           PopupMenuButton<String>(
             onSelected: (value) => _handleMenu(context, value),
             itemBuilder: (context) => const [
               PopupMenuItem(value: 'rename', child: Text('Cambiar nombre')),
-              PopupMenuItem(value: 'delete', child: Text('Eliminar playlist')),
+              PopupMenuItem(value: 'delete', child: Text('Eliminar lista')),
             ],
           ),
         ],
       ),
       body: songs.isEmpty
-          ? const Center(child: Text('Agrega canciones desde el menú (⋮) de cualquier canción'))
+          ? const Center(
+              child: Text(
+                  'Agregá canciones desde el menú de tres puntos de cualquier canción'))
           : isAudioAvailable
               ? StreamBuilder<MediaItem?>(
                   stream: sl<AudioHandler>().mediaItem,
-                  builder: (context, snapshot) => _buildList(
-                      context, songs, snapshot.data?.id),
+                  builder: (context, snapshot) =>
+                      _buildList(context, songs, snapshot.data?.id),
                 )
               : _buildList(context, songs, null),
     );
@@ -135,8 +136,9 @@ class _PlaylistDetailBody extends StatelessWidget {
         final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('¿Eliminar playlist?'),
-            content: Text('Se eliminará "${playlist.name}". Las canciones no se borran de tu dispositivo.'),
+            title: const Text('¿Eliminar la lista?'),
+            content: Text(
+                'Se eliminará "${playlist.name}". Las canciones no se borran de tu dispositivo.'),
             actions: [
               TextButton.icon(
                 onPressed: () => Navigator.of(context).pop(false),
@@ -234,20 +236,18 @@ class _PlaylistSongListState extends State<_PlaylistSongList> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
-                  color: isCurrent
-                      ? Theme.of(context).colorScheme.primary
-                      : null,
+                  color:
+                      isCurrent ? Theme.of(context).colorScheme.primary : null,
                 ),
               ),
               subtitle: Text(song.artist ?? 'Desconocido',
                   maxLines: 1, overflow: TextOverflow.ellipsis),
               trailing: isCurrent
-                  ? Icon(Icons.equalizer,
+                  ? Icon(Icons.graphic_eq,
                       color: Theme.of(context).colorScheme.primary)
                   : const Icon(Icons.drag_handle),
-              onTap: isAudioAvailable
-                  ? () => _play(context, songs, index)
-                  : null,
+              onTap:
+                  isAudioAvailable ? () => _play(context, songs, index) : null,
             ),
           );
         },
@@ -258,9 +258,9 @@ class _PlaylistSongListState extends State<_PlaylistSongList> {
   Future<void> _play(BuildContext context, List<Song> songs, int index) async {
     // Reproducir desde una playlist reemplaza la cola por las canciones de
     // esa playlist (en su propio orden), no la biblioteca completa.
-    final handler = sl<AudioHandler>() as MyAudioHandler;
-    final items = songs.map(SongMapper.toMediaItem).toList();
-    await handler.setQueue(items, startIndex: index);
+    final handler = sl<AudioHandler>();
+    final items = songs.map(MediaItemMapper.fromSong).toList();
+    await (handler as QueueCapableHandler).setQueue(items, startIndex: index);
     await handler.play();
   }
 }

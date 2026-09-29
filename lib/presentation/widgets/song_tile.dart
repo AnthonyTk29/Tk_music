@@ -49,7 +49,7 @@ class SongTile extends StatelessWidget {
         // Un IconButton propio consume el tap antes de que llegue al
         // ListTile: se puede abrir el menú sin disparar onTap (reproducir).
         trailing: isCurrent
-            ? Icon(Icons.equalizer, color: theme.colorScheme.primary)
+            ? Icon(Icons.graphic_eq, color: theme.colorScheme.primary)
             : IconButton(
                 icon: const Icon(Icons.more_vert),
                 tooltip: 'Más opciones',

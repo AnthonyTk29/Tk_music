@@ -31,8 +31,12 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.tkmusic.app"
-    compileSdkVersion flutter.compileSdkVersion
-    ndkVersion flutter.ndkVersion
+    // 36: lo exige media_kit (plugins compilados contra SDK 36). Es solo el
+    // SDK de compilación, es retrocompatible; targetSdk sigue en 35.
+    compileSdkVersion 36
+    // 27: lo piden audio_service, firebase, mobile_scanner y otros plugins
+    // (el NDK es retrocompatible; el de Flutter 3.32 por defecto es el 26).
+    ndkVersion "27.0.12077973"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

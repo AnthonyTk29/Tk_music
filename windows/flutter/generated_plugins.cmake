@@ -3,7 +3,9 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  camera_windows
   firebase_core
+  media_kit_libs_windows_audio
   permission_handler_windows
   url_launcher_windows
 )

@@ -40,6 +40,24 @@ flutter pub get
 flutter build apk --debug
 ```
 
+## Instalador de Windows
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\installeruild_installer.ps1
+```
+
+Compila la app en Release, le suma el runtime de Visual C++ (para PCs que no
+lo tienen) y arma con Inno Setup 6 `build\installer\TK_Music_Setup_<versión>.exe`
+(la versión sale de `pubspec.yaml`) y también la versión portátil
+`build\installer\TK_Music_Portable_<versión>.zip` (se descomprime y se abre
+`tk_music.exe`, sin instalar; los datos del usuario quedan en cada PC). El script del instalador es
+[`windows/installer/tk_music.iss`](windows/installer/tk_music.iss): instala en
+español, sin pedir administrador (o para todos los usuarios si se elige),
+con acceso en el menú Inicio, ícono opcional en el escritorio y
+desinstalador; una versión nueva actualiza la instalada. El instalador no está
+firmado digitalmente, así que Windows SmartScreen avisa la primera vez ("Más
+información" → "Ejecutar de todas formas").
+
 ## Firma de release
 
 Las credenciales del keystore **no se versionan**. Para generar un release firmado,
@@ -70,31 +88,64 @@ a la versión de pub.dev y borrar la copia local + el override.
 
 ## Arquitectura
 
-Clean Architecture con inyección de dependencias vía `get_it` (`lib/core/di`):
+Clean Architecture con inyección de dependencias vía `get_it` (`lib/core/di`).
+
+### Regla de dependencias
+
+Las flechas apuntan siempre hacia adentro (hacia el dominio):
+
+```
+presentation ─┐
+              ├─> services (infraestructura) ─┐
+data ─────────┘                               ├─> domain
+                                              └─> core
+```
+
+| Capa | Qué hay | Puede usar | Nunca |
+|---|---|---|---|
+| `domain` | Entidades, contratos de repositorios, casos de uso, fallas | Solo Dart (y `meta`) | Flutter, plugins, cualquier otra capa |
+| `data` | Implementaciones de los repositorios (MediaStore en Android, discos en desktop) | `domain`, `core`, adaptadores de `services` | `presentation` |
+| `services` | Motores (reproductor, DJ, sincronización, Automix) y adaptadores de plataforma (canales nativos, archivos, preferencias) | `domain`, `core` | `data`, `presentation` (lo que necesitan de `data` lo piden por una interfaz del dominio) |
+| `presentation` | Pantallas, widgets y estado de UI | `domain`, `core`, `services` | `data`; archivos, preferencias o canales nativos directos |
+| `core` | Errores, tema, utilidades, plataforma | `domain` | Las demás (salvo `core/di`, que arma todo) |
+
+`main.dart` y `core/di/service_locator.dart` son la raíz de composición: registran cada
+implementación de `data` detrás de su interfaz del dominio (p. ej. `SongRepository` →
+`SongRepositoryImpl` en Android / `DesktopSongRepositoryImpl` en desktop;
+`AudioImportRepository` → `AndroidAudioImportRepository` / `DesktopAudioImportRepository`).
+
+**`test/architecture_test.dart` revisa esta regla en cada corrida de tests**: si un
+import cruza una capa, el test falla y dice qué archivo y qué import.
 
 ```
 lib/
 ├── main.dart                                    # boot: AudioService, DI, providers, shell
 ├── core/
 │   ├── di/service_locator.dart                  # registro de dependencias (GetIt)
-│   ├── errors/failures.dart                     # tipos de error del dominio
-│   ├── theme/app_theme.dart                      # tema claro/oscuro
-│   └── utils/formatters.dart                     # formatDuration()
-├── domain/
-│   ├── entities/song.dart                        # entidad Song (independiente del plugin)
-│   ├── repositories/song_repository.dart         # contrato del repositorio
-│   └── usecases/                                 # GetSongs, RequestPermission
+│   ├── errors/                                  # AppException, códigos, reporte de errores
+│   ├── platform.dart                            # preguntas de plataforma con nombre
+│   ├── theme/app_theme.dart                     # tema claro/oscuro
+│   └── utils/formatters.dart                    # formatDuration()
+├── domain/                                      # Dart puro
+│   ├── entities/                                # Song, Playlist, Profile, stableSongId…
+│   ├── failures/failures.dart                   # fallas de los casos de uso
+│   ├── repositories/                            # SongRepository, ProfileRepository, AudioImportRepository
+│   └── usecases/                                # GetSongs, RequestPermission
 ├── data/
-│   ├── datasources/song_local_datasource.dart    # on_audio_query + permission_handler
-│   ├── models/song_mapper.dart                   # SongModel -> Song -> MediaItem
-│   └── repositories/song_repository_impl.dart
+│   ├── datasources/song_local_datasource.dart   # on_audio_query + permission_handler
+│   ├── models/song_mapper.dart                  # SongModel (MediaStore) -> Song
+│   └── repositories/                            # implementaciones Android y desktop
 ├── presentation/
-│   ├── providers/                                # SongProvider, PermissionProvider (ChangeNotifier)
-│   ├── pages/                                     # music_player, now_playing, request_permission
-│   └── widgets/                                   # app_providers, mini_player, seek_bar, song_tile, song_artwork
-└── services/
-    ├── audio_handler.dart                         # AudioHandler (cola, play/pause, seek, shuffle/repeat)
-    └── artwork_cache.dart                         # carátulas a disco para la notificación
+│   ├── navigation/breadcrumbs.dart              # migas de pan (observador del navegador)
+│   ├── providers/                               # SongProvider, PermissionProvider, ProfileProvider
+│   ├── pages/                                   # pantallas
+│   └── widgets/                                 # componentes (dj/, progress_task_dialog…)
+└── services/                                    # motores y adaptadores de plataforma
+    ├── audio_handler.dart, basic_player.dart    # reproducción
+    ├── media_item_mapper.dart                   # Song -> MediaItem (audio_service)
+    ├── dj/                                      # decks, mezclador, controladores MIDI, archivos
+    ├── whatsapp_files.dart                      # carpeta de WhatsApp (SAF) y sus preferencias
+    └── …                                        # sincronización, Automix, carátulas, stores
 ```
 
 `AppProviders` (en `presentation/widgets/app_providers.dart`) es un `InheritedNotifier`

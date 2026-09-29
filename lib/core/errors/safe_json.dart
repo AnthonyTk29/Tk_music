@@ -23,7 +23,8 @@ T readJson<T>(
   try {
     return parse(jsonDecode(raw));
   } catch (e, stack) {
-    ErrorReporter.instance.log(Exception('JSON corrupto en $context: $e'), stack);
+    ErrorReporter.instance
+        .log(Exception('JSON corrupto en $context: $e'), stack);
     return fallback;
   }
 }

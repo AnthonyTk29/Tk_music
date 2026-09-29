@@ -4,12 +4,18 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 
 import 'package:tk_music/core/di/service_locator.dart';
+import 'package:tk_music/core/platform.dart';
+import 'package:tk_music/presentation/pages/lyrics_screen.dart';
 import 'package:tk_music/presentation/pages/queue_screen.dart';
+import 'package:tk_music/presentation/widgets/app_header.dart';
+import 'package:tk_music/presentation/widgets/artwork_backdrop.dart';
+import 'package:tk_music/presentation/widgets/media_artwork.dart';
+import 'package:tk_music/presentation/widgets/scrollable_fill.dart';
 import 'package:tk_music/presentation/widgets/seek_bar.dart';
-import 'package:tk_music/presentation/widgets/song_artwork.dart';
 import 'package:tk_music/presentation/widgets/scrolling_waveform_view.dart';
 import 'package:tk_music/presentation/widgets/song_options_sheet.dart';
-import 'package:tk_music/services/audio_handler.dart';
+import 'package:tk_music/services/app_audio_handler.dart';
+import 'package:tk_music/services/player_position.dart';
 import 'package:tk_music/services/waveform_loader.dart';
 
 class NowPlayingScreen extends StatelessWidget {
@@ -19,7 +25,7 @@ class NowPlayingScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!isAudioAvailable) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Reproduciendo')),
+        appBar: AppBar(title: const AppHeaderTitle(section: 'Reproduciendo')),
         body: const Center(child: Text('Audio no disponible')),
       );
     }
@@ -28,12 +34,19 @@ class NowPlayingScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('REPRODUCIENDO', style: TextStyle(fontSize: 13, letterSpacing: 1.2)),
+        title: const AppHeaderTitle(section: 'Reproduciendo'),
         leading: IconButton(
           icon: const Icon(Icons.keyboard_arrow_down),
           onPressed: () => Navigator.of(context).pop(),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Letra',
+            icon: const Icon(Icons.lyrics_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const LyricsScreen()),
+            ),
+          ),
           const _SleepTimerButton(),
           IconButton(
             tooltip: 'A continuación',
@@ -44,170 +57,179 @@ class NowPlayingScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: RadialGradient(
-            center: Alignment.topCenter,
-            radius: 1.3,
-            colors: [Color(0xFF0E1B33), Color(0xFF070B14)],
-          ),
-        ),
+      body: ArtworkBackdrop(
+        mediaItems: audioHandler.mediaItem,
         child: StreamBuilder<MediaItem?>(
-        stream: audioHandler.mediaItem,
-        builder: (context, snapshot) {
-          final item = snapshot.data;
-          if (item == null) {
-            return const Center(child: Text('Nada en reproducción'));
-          }
-          final songId = item.extras?['songId'] as int?;
+          stream: audioHandler.mediaItem,
+          builder: (context, snapshot) {
+            final item = snapshot.data;
+            if (item == null) {
+              return const Center(child: Text('Nada en reproducción'));
+            }
+            final songId = item.extras?['songId'] as int?;
 
-          return SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 28),
-              child: Column(
-                children: [
-                  const Spacer(),
-                  if (songId != null)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(18),
-                      child: SongArtwork(songId: songId, size: 300, borderRadius: 18),
-                    ),
-                  const SizedBox(height: 32),
-                  Text(
-                    item.title,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
-                    textAlign: TextAlign.center,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    item.artist ?? 'Desconocido',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color:
-                              Theme.of(context).colorScheme.onSurfaceVariant,
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 28),
+                // Ventanas bajas: se desplaza en vez de desbordar.
+                child: ScrollableFill(
+                  child: Column(
+                    children: [
+                      const Spacer(),
+                      if (MediaArtwork.hasArtwork(item))
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(18),
+                          child: MediaArtwork(
+                              item: item, size: 300, borderRadius: 18),
                         ),
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const Spacer(),
-                  if (songId != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: AnimatedBuilder(
-                        animation: WaveformLoader.instance,
-                        builder: (context, _) {
-                          return StreamBuilder<Duration>(
-                            stream: AudioService.position,
-                            builder: (context, posSnapshot) {
-                              final position = posSnapshot.data ?? Duration.zero;
-                              final total = item.duration ?? Duration.zero;
-                              final progress = total.inMilliseconds == 0
-                                  ? 0.0
-                                  : position.inMilliseconds / total.inMilliseconds;
-                              return ScrollingWaveformView(
-                                peaks: WaveformLoader.instance.peaks,
-                                progress: progress,
-                                onSeek: total == Duration.zero
-                                    ? null
-                                    : (t) => audioHandler.seek(total * t),
+                      const SizedBox(height: 32),
+                      Text(
+                        item.title,
+                        style: Theme.of(context)
+                            .textTheme
+                            .headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        item.artist ?? 'Desconocido',
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const Spacer(),
+                      // La onda sale del análisis nativo de audio (Android y
+                      // Windows); donde no existe quedaría cargando para siempre.
+                      if (songId != null && hasNativeAudioAnalysis)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: AnimatedBuilder(
+                            animation: WaveformLoader.instance,
+                            builder: (context, _) {
+                              return StreamBuilder<Duration>(
+                                stream: PlayerPosition.stream,
+                                builder: (context, posSnapshot) {
+                                  final position =
+                                      posSnapshot.data ?? Duration.zero;
+                                  final total = item.duration ?? Duration.zero;
+                                  final progress = total.inMilliseconds == 0
+                                      ? 0.0
+                                      : position.inMilliseconds /
+                                          total.inMilliseconds;
+                                  return ScrollingWaveformView(
+                                    peaks: WaveformLoader.instance.peaks,
+                                    progress: progress,
+                                    onSeek: total == Duration.zero
+                                        ? null
+                                        : (t) => audioHandler.seek(total * t),
+                                  );
+                                },
                               );
                             },
+                          ),
+                        ),
+                      StreamBuilder<Duration>(
+                        stream: PlayerPosition.stream,
+                        builder: (context, posSnapshot) => SeekBar(
+                          duration: item.duration ?? Duration.zero,
+                          position: posSnapshot.data ?? Duration.zero,
+                          onChangeEnd: audioHandler.seek,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      StreamBuilder<PlaybackState>(
+                        stream: audioHandler.playbackState,
+                        builder: (context, stateSnapshot) {
+                          final playing = stateSnapshot.data?.playing ?? false;
+                          final repeat = stateSnapshot.data?.repeatMode ??
+                              AudioServiceRepeatMode.none;
+                          return Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              IconButton(
+                                tooltip: switch (repeat) {
+                                  AudioServiceRepeatMode.all => 'Repetir todas',
+                                  AudioServiceRepeatMode.one => 'Repetir una',
+                                  _ => 'Repetición',
+                                },
+                                onPressed: () => audioHandler.setRepeatMode(
+                                  switch (repeat) {
+                                    AudioServiceRepeatMode.none =>
+                                      AudioServiceRepeatMode.all,
+                                    AudioServiceRepeatMode.all =>
+                                      AudioServiceRepeatMode.one,
+                                    _ => AudioServiceRepeatMode.none,
+                                  },
+                                ),
+                                icon: Icon(
+                                  repeat == AudioServiceRepeatMode.one
+                                      ? Icons.repeat_one
+                                      : Icons.repeat,
+                                  color: repeat != AudioServiceRepeatMode.none
+                                      ? Theme.of(context).colorScheme.primary
+                                      : null,
+                                ),
+                              ),
+                              IconButton(
+                                iconSize: 36,
+                                onPressed: audioHandler.skipToPrevious,
+                                icon: const Icon(Icons.skip_previous),
+                              ),
+                              IconButton.filled(
+                                style: IconButton.styleFrom(
+                                  backgroundColor:
+                                      Theme.of(context).colorScheme.primary,
+                                  foregroundColor:
+                                      Theme.of(context).colorScheme.onPrimary,
+                                  minimumSize: const Size(60, 60),
+                                ),
+                                iconSize: 32,
+                                onPressed: playing
+                                    ? audioHandler.pause
+                                    : audioHandler.play,
+                                icon: Icon(
+                                    playing ? Icons.pause : Icons.play_arrow),
+                              ),
+                              IconButton(
+                                iconSize: 36,
+                                onPressed: audioHandler.skipToNext,
+                                icon: const Icon(Icons.skip_next),
+                              ),
+                              IconButton(
+                                tooltip: 'Más opciones',
+                                icon: const Icon(Icons.more_vert),
+                                onPressed: songId == null
+                                    ? null
+                                    : () => showSongOptionsSheet(
+                                          context,
+                                          mediaStoreId: songId,
+                                          title: item.title,
+                                          artist: item.artist,
+                                          album: item.album,
+                                          duration: item.duration,
+                                          filePath: item.id,
+                                        ),
+                              ),
+                            ],
                           );
                         },
                       ),
-                    ),
-                  StreamBuilder<Duration>(
-                    stream: AudioService.position,
-                    builder: (context, posSnapshot) => SeekBar(
-                      duration: item.duration ?? Duration.zero,
-                      position: posSnapshot.data ?? Duration.zero,
-                      onChangeEnd: audioHandler.seek,
-                    ),
+                      const SizedBox(height: 32),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  StreamBuilder<PlaybackState>(
-                    stream: audioHandler.playbackState,
-                    builder: (context, stateSnapshot) {
-                      final playing = stateSnapshot.data?.playing ?? false;
-                      final repeat = stateSnapshot.data?.repeatMode ??
-                          AudioServiceRepeatMode.none;
-                      return Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          IconButton(
-                            tooltip: switch (repeat) {
-                              AudioServiceRepeatMode.all => 'Repetir todas',
-                              AudioServiceRepeatMode.one => 'Repetir una',
-                              _ => 'Repetición',
-                            },
-                            onPressed: () => audioHandler.setRepeatMode(
-                              switch (repeat) {
-                                AudioServiceRepeatMode.none =>
-                                  AudioServiceRepeatMode.all,
-                                AudioServiceRepeatMode.all =>
-                                  AudioServiceRepeatMode.one,
-                                _ => AudioServiceRepeatMode.none,
-                              },
-                            ),
-                            icon: Icon(
-                              repeat == AudioServiceRepeatMode.one
-                                  ? Icons.repeat_one
-                                  : Icons.repeat,
-                              color: repeat != AudioServiceRepeatMode.none
-                                  ? Theme.of(context).colorScheme.primary
-                                  : null,
-                            ),
-                          ),
-                          IconButton(
-                            iconSize: 36,
-                            onPressed: audioHandler.skipToPrevious,
-                            icon: const Icon(Icons.skip_previous),
-                          ),
-                          IconButton.filled(
-                            style: IconButton.styleFrom(
-                              backgroundColor: Theme.of(context).colorScheme.primary,
-                              foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                              minimumSize: const Size(60, 60),
-                            ),
-                            iconSize: 32,
-                            onPressed: playing
-                                ? audioHandler.pause
-                                : audioHandler.play,
-                            icon:
-                                Icon(playing ? Icons.pause : Icons.play_arrow),
-                          ),
-                          IconButton(
-                            iconSize: 36,
-                            onPressed: audioHandler.skipToNext,
-                            icon: const Icon(Icons.skip_next),
-                          ),
-                          IconButton(
-                            tooltip: 'Más opciones',
-                            icon: const Icon(Icons.more_vert),
-                            onPressed: songId == null
-                                ? null
-                                : () => showSongOptionsSheet(
-                                      context,
-                                      mediaStoreId: songId,
-                                      title: item.title,
-                                      artist: item.artist,
-                                      album: item.album,
-                                      duration: item.duration,
-                                      filePath: item.id,
-                                    ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 32),
-                ],
+                ),
               ),
-            ),
-          );
-        },
+            );
+          },
         ),
       ),
     );
@@ -228,7 +250,7 @@ class _SleepTimerButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final handler = sl<AudioHandler>() as MyAudioHandler;
+    final handler = sl<AudioHandler>() as AppAudioHandler;
 
     return ValueListenableBuilder<DateTime?>(
       valueListenable: handler.sleepTimerEndsAt,
@@ -237,7 +259,8 @@ class _SleepTimerButton extends StatelessWidget {
           tooltip: 'Temporizador de apagado',
           icon: Icon(
             endsAt != null ? Icons.bedtime : Icons.bedtime_outlined,
-            color: endsAt != null ? Theme.of(context).colorScheme.primary : null,
+            color:
+                endsAt != null ? Theme.of(context).colorScheme.primary : null,
           ),
           onPressed: () => _showSheet(context, handler, endsAt),
         );
@@ -245,7 +268,8 @@ class _SleepTimerButton extends StatelessWidget {
     );
   }
 
-  void _showSheet(BuildContext context, MyAudioHandler handler, DateTime? endsAt) {
+  void _showSheet(
+      BuildContext context, AppAudioHandler handler, DateTime? endsAt) {
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
@@ -284,7 +308,7 @@ class _RemainingTimeTile extends StatefulWidget {
   const _RemainingTimeTile({required this.endsAt, required this.handler});
 
   final DateTime endsAt;
-  final MyAudioHandler handler;
+  final AppAudioHandler handler;
 
   @override
   State<_RemainingTimeTile> createState() => _RemainingTimeTileState();
@@ -296,7 +320,8 @@ class _RemainingTimeTileState extends State<_RemainingTimeTile> {
   @override
   void initState() {
     super.initState();
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
+    _ticker =
+        Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
   }
 
   @override
@@ -309,7 +334,8 @@ class _RemainingTimeTileState extends State<_RemainingTimeTile> {
   Widget build(BuildContext context) {
     final remaining = widget.endsAt.difference(DateTime.now());
     final minutes = remaining.isNegative ? 0 : remaining.inMinutes;
-    final seconds = remaining.isNegative ? 0 : remaining.inSeconds.remainder(60);
+    final seconds =
+        remaining.isNegative ? 0 : remaining.inSeconds.remainder(60);
 
     return ListTile(
       leading: const Icon(Icons.bedtime),

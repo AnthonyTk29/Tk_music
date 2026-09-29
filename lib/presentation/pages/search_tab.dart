@@ -79,9 +79,8 @@ class _Results extends StatelessWidget {
         return SongTile(
           song: song,
           isCurrent: song.filePath == currentId,
-          onTap: isAudioAvailable
-              ? () => playFromLibrary(provider, song)
-              : null,
+          onTap:
+              isAudioAvailable ? () => playFromLibrary(provider, song) : null,
         );
       },
     );

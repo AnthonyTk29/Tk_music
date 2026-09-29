@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
 
+import 'player_position.dart';
 import 'waveform_store.dart';
 
 /// Carga la forma de onda de la canción actual una sola vez, en un único
@@ -60,7 +61,7 @@ class WaveformLoader extends ChangeNotifier {
     // próximo que se va a ver), no desde el principio.
     var position = Duration.zero;
     try {
-      position = await AudioService.position.first
+      position = await PlayerPosition.stream.first
           .timeout(const Duration(milliseconds: 300));
     } catch (_) {}
     final total = item.duration ?? Duration.zero;

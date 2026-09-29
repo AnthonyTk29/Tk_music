@@ -10,14 +10,26 @@ import 'dart:io';
 /// por WhatsApp — esas se sacan por ruta/patrón de nombre (ver más abajo),
 /// no por extensión, así que acá se listan los formatos de música real más
 /// comunes (incluye los que WhatsApp también usa para audios reenviados,
-/// como m4a/opus/ogg, ya que "Importar de WhatsApp" copia el archivo tal
+/// como m4a/opus/ogg, ya que "Audios de WhatsApp" copia el archivo tal
 /// cual sin recodificarlo).
 const _allowedExtensions = {'mp3', 'wav', 'm4a', 'aac', 'opus', 'ogg', 'flac'};
 
 /// WhatsApp guarda las notas de voz y los audios reenviados con este patrón
 /// de nombre (AUD-20260127-WA0014.mp3), incluso cuando el archivo termina en
 /// .mp3 — así que el filtro de extensión solo no alcanza para sacarlos.
-final _whatsappAudioPattern = RegExp(r'AUD-\d{8}-WA\d+', caseSensitive: false);
+final _whatsappAudioPattern =
+    RegExp(r'(AUD|PTT)-\d{8}-WA\d+', caseSensitive: false);
+
+/// Si [path] es un audio de WhatsApp (su carpeta, o el nombre AUD-/PTT-):
+/// esos no entran a la biblioteca normal, se importan a mano. Lo importado
+/// va a "Audios de WhatsApp" con un nombre limpio, así ya no cae acá.
+bool isWhatsAppAudioPath(String path) {
+  final lower = path.toLowerCase();
+  if (lower.contains('/whatsapp/') || lower.contains('whatsapp audio')) {
+    return true;
+  }
+  return _whatsappAudioPattern.hasMatch(path);
+}
 
 class SongLocalDatasource {
   SongLocalDatasource({OnAudioQuery? query}) : _query = query ?? OnAudioQuery();
@@ -35,7 +47,7 @@ class SongLocalDatasource {
   }
 
   /// Audios de WhatsApp (notas de voz y reenviados) que [fetchSongs] excluye
-  /// de la biblioteca normal. Los usa la pantalla "Importar de WhatsApp"
+  /// de la biblioteca normal. Los usa la pantalla "Audios de WhatsApp"
   /// para poder elegir manualmente cuáles copiar a Download.
   Future<List<SongModel>> fetchWhatsAppAudios() async {
     final granted = await hasPermission || await requestPermission();
@@ -52,13 +64,7 @@ class SongLocalDatasource {
     return !_isWhatsAppAudio(song);
   }
 
-  bool _isWhatsAppAudio(SongModel song) {
-    final path = song.data.toLowerCase();
-    if (path.contains('/whatsapp/') || path.contains('whatsapp audio')) {
-      return true;
-    }
-    return _whatsappAudioPattern.hasMatch(song.data);
-  }
+  bool _isWhatsAppAudio(SongModel song) => isWhatsAppAudioPath(song.data);
 
   /// `PermissionProvider` y `SongProvider` piden permiso de forma
   /// independiente al arrancar la app; sin esto, ambos llaman a

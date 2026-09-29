@@ -18,17 +18,17 @@ class AppProviders extends StatefulWidget {
   final ProfileProvider profileProvider;
   final Widget child;
 
-  static SongProvider songOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<_InheritedProviders>()!
-          .songProvider;
+  static SongProvider songOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_InheritedProviders>()!
+      .songProvider;
 
-  static PermissionProvider permissionOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<_InheritedProviders>()!
-          .permissionProvider;
+  static PermissionProvider permissionOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_InheritedProviders>()!
+      .permissionProvider;
 
-  static ProfileProvider profileOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<_InheritedProviders>()!
-          .profileProvider;
+  static ProfileProvider profileOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_InheritedProviders>()!
+      .profileProvider;
 
   @override
   State<AppProviders> createState() => _AppProvidersState();

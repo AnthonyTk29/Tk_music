@@ -2,21 +2,25 @@ import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
-import 'package:just_audio/just_audio.dart';
 
 import 'package:tk_music/core/di/service_locator.dart';
+import 'package:tk_music/core/platform.dart';
 import 'package:tk_music/domain/entities/equalizer_preset.dart';
+import 'package:tk_music/presentation/widgets/app_header.dart';
 import 'package:tk_music/presentation/widgets/scrolling_waveform_view.dart';
 import 'package:tk_music/presentation/widgets/spectrum_visualizer.dart';
-import 'package:tk_music/services/audio_handler.dart';
+import 'package:tk_music/services/app_audio_handler.dart';
+import 'package:tk_music/services/equalizer_controller.dart';
 import 'package:tk_music/services/equalizer_store.dart';
+import 'package:tk_music/services/player_position.dart';
 import 'package:tk_music/services/spectrogram_store.dart';
 import 'package:tk_music/services/waveform_loader.dart';
 
 /// Ecualizador gráfico: sube o baja la ganancia por banda de frecuencia
-/// (graves a agudos) de la reproducción principal, usando el efecto nativo
-/// Equalizer de Android que ya trae just_audio. No cubre al Mezclador
-/// automático (usa sus propios reproductores aparte).
+/// (graves a agudos) de la reproducción principal: el efecto nativo
+/// Equalizer de Android que trae just_audio, o el filtro de mpv en desktop
+/// (ver EqualizerController). No cubre al Mezclador automático (usa sus
+/// propios reproductores aparte).
 class EqualizerScreen extends StatefulWidget {
   const EqualizerScreen({super.key});
 
@@ -27,7 +31,7 @@ class EqualizerScreen extends StatefulWidget {
 class _EqualizerScreenState extends State<EqualizerScreen> {
   final _store = EqualizerStore();
   final _spectrogramStore = SpectrogramStore();
-  AndroidEqualizerParameters? _params;
+  EqualizerParameters? _params;
   final Map<int, double> _gains = {};
   bool _enabled = false;
   bool _unavailable = false;
@@ -49,12 +53,15 @@ class _EqualizerScreenState extends State<EqualizerScreen> {
     super.dispose();
   }
 
+  EqualizerController get _controller =>
+      (sl<AudioHandler>() as AppAudioHandler).equalizer;
+
   Future<void> _load() async {
     if (!isAudioAvailable) {
       setState(() => _unavailable = true);
       return;
     }
-    final handler = sl<AudioHandler>() as MyAudioHandler;
+    final handler = sl<AudioHandler>() as AppAudioHandler;
     try {
       final params = await handler.equalizer.parameters;
       final enabled = handler.equalizer.enabled;
@@ -74,7 +81,9 @@ class _EqualizerScreenState extends State<EqualizerScreen> {
       // handler.mediaItem reproduce el último valor apenas alguien se
       // suscribe, así que este listen ya cubre la canción actual (si hay
       // una sonando) sin necesitar un fetch aparte.
-      _mediaItemSub = handler.mediaItem.listen((item) {
+      // El espectro sale del análisis nativo de audio (Android y Windows).
+      if (!hasNativeAudioAnalysis) return;
+      _mediaItemSub = sl<AudioHandler>().mediaItem.listen((item) {
         final songId = item?.extras?['songId'] as int?;
         if (item != null && songId != null) {
           unawaited(_maybeLoadSpectrogram(item, songId));
@@ -92,7 +101,7 @@ class _EqualizerScreenState extends State<EqualizerScreen> {
 
     var position = Duration.zero;
     try {
-      position = await AudioService.position.first
+      position = await PlayerPosition.stream.first
           .timeout(const Duration(milliseconds: 300));
     } catch (_) {}
     final total = item.duration ?? Duration.zero;
@@ -120,20 +129,20 @@ class _EqualizerScreenState extends State<EqualizerScreen> {
   }
 
   Future<void> _toggleEnabled(bool value) async {
-    final handler = sl<AudioHandler>() as MyAudioHandler;
+    final handler = sl<AudioHandler>() as AppAudioHandler;
     setState(() => _enabled = value);
     await handler.equalizer.setEnabled(value);
     await _store.setEnabled(value);
   }
 
-  void _setGain(AndroidEqualizerBand band, double gain) {
+  void _setGain(EqualizerBandInfo band, double gain) {
     // Tocar una banda a mano deja de ser "Pop"/"Rock"/etc — pasa a ser tu
     // propia mezcla.
     setState(() {
       _gains[band.index] = gain;
       _preset = EqualizerPreset.custom;
     });
-    unawaited(band.setGain(gain));
+    unawaited(_controller.setBandGain(band.index, gain));
     unawaited(_store.saveGain(band.index, gain));
     unawaited(_store.setPreset(EqualizerPreset.custom.name));
   }
@@ -151,7 +160,7 @@ class _EqualizerScreenState extends State<EqualizerScreen> {
       );
       for (var i = 0; i < params.bands.length; i++) {
         final band = params.bands[i];
-        await band.setGain(gains[i]);
+        await _controller.setBandGain(band.index, gains[i]);
         await _store.saveGain(band.index, gains[i]);
         _gains[band.index] = gains[i];
       }
@@ -167,7 +176,7 @@ class _EqualizerScreenState extends State<EqualizerScreen> {
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
       appBar: AppBar(
-        title: const Text('Ecualizador'),
+        title: const AppHeaderTitle(section: 'Ecualizador'),
         actions: [
           IconButton(
             tooltip: 'Restablecer a Normal',
@@ -214,13 +223,21 @@ class _EqualizerScreenState extends State<EqualizerScreen> {
               Text('Espectro en vivo', style: theme.textTheme.labelLarge),
               const SizedBox(height: 10),
               StreamBuilder<Duration>(
-                stream: AudioService.position,
+                stream: PlayerPosition.stream,
                 builder: (context, posSnapshot) {
                   final position = posSnapshot.data ?? Duration.zero;
-                  return SpectrumVisualizer(bands: _spectrogram?.bandsAt(position));
+                  return SpectrumVisualizer(
+                      bands: _spectrogram?.bandsAt(position));
                 },
               ),
-              if (_spectrumFailed) ...[
+              if (!hasNativeAudioAnalysis) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'El espectro todavía no está disponible en este sistema.',
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ] else if (_spectrumFailed) ...[
                 const SizedBox(height: 6),
                 Text(
                   'No se pudo activar el espectro en este dispositivo.',
@@ -243,7 +260,7 @@ class _EqualizerScreenState extends State<EqualizerScreen> {
           child: DropdownButtonFormField<EqualizerPreset>(
             value: _preset,
             decoration: const InputDecoration(
-              labelText: 'Preset',
+              labelText: 'Ajuste predefinido',
               border: InputBorder.none,
             ),
             items: [
@@ -349,8 +366,7 @@ class _NowPlayingWaveformCardState extends State<_NowPlayingWaveformCard> {
   void initState() {
     super.initState();
     if (!isAudioAvailable) return;
-    final handler = sl<AudioHandler>() as MyAudioHandler;
-    _mediaItemSub = handler.mediaItem.listen((item) {
+    _mediaItemSub = sl<AudioHandler>().mediaItem.listen((item) {
       if (mounted) setState(() => _item = item);
     });
   }
@@ -406,7 +422,7 @@ class _NowPlayingWaveformCardState extends State<_NowPlayingWaveformCard> {
             animation: WaveformLoader.instance,
             builder: (context, _) {
               return StreamBuilder<Duration>(
-                stream: AudioService.position,
+                stream: PlayerPosition.stream,
                 builder: (context, posSnapshot) {
                   final position = posSnapshot.data ?? Duration.zero;
                   final total = item.duration ?? Duration.zero;
@@ -438,7 +454,7 @@ class _BandSlider extends StatelessWidget {
     required this.onChanged,
   });
 
-  final AndroidEqualizerBand band;
+  final EqualizerBandInfo band;
   final double gain;
   final double minDb;
   final double maxDb;
@@ -467,8 +483,7 @@ class _BandSlider extends StatelessWidget {
                 activeTrackColor: accent,
                 inactiveTrackColor:
                     theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-                thumbShape:
-                    const RoundSliderThumbShape(enabledThumbRadius: 8),
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
                 thumbColor: accent,
                 overlayColor: accent.withValues(alpha: 0.15),
               ),

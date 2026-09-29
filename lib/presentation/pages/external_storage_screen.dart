@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'package:tk_music/core/di/service_locator.dart';
 import 'package:tk_music/presentation/utils/playback_actions.dart';
+import 'package:tk_music/presentation/widgets/app_header.dart';
 import 'package:tk_music/services/external_storage_service.dart';
 import 'package:tk_music/services/external_storage_store.dart';
 
@@ -15,7 +16,8 @@ class ExternalStorageScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Almacenamiento externo')),
+      appBar: AppBar(
+          title: const AppHeaderTitle(section: 'Almacenamiento externo')),
       body: AnimatedBuilder(
         animation: ExternalStorageStore.instance,
         builder: (context, _) {
@@ -30,8 +32,9 @@ class ExternalStorageScreen extends StatelessWidget {
                   for (final root in roots)
                     ListTile(
                       leading: CircleAvatar(
-                        backgroundColor:
-                            Theme.of(context).colorScheme.surfaceContainerHighest,
+                        backgroundColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
                         child: const Icon(Icons.usb),
                       ),
                       title: Text(root.name),
@@ -120,7 +123,8 @@ class _EmptyState extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 32),
       child: Column(
         children: [
-          Icon(Icons.usb_off, size: 40, color: theme.colorScheme.onSurfaceVariant),
+          Icon(Icons.usb_off,
+              size: 40, color: theme.colorScheme.onSurfaceVariant),
           const SizedBox(height: 12),
           Text(
             'Todavía no conectaste ningún pendrive. Tocá "Conectar pendrive" '
@@ -139,7 +143,8 @@ class _EmptyState extends StatelessWidget {
 /// archivos de audio. Tocar una canción arma la cola con todos los audios
 /// visibles en esta misma carpeta (no navega recursivo a subcarpetas).
 class ExternalFolderScreen extends StatefulWidget {
-  const ExternalFolderScreen({super.key, required this.uri, required this.title});
+  const ExternalFolderScreen(
+      {super.key, required this.uri, required this.title});
 
   final String uri;
   final String title;
@@ -161,7 +166,7 @@ class _ExternalFolderScreenState extends State<ExternalFolderScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title)),
+      appBar: AppBar(title: AppHeaderTitle(section: widget.title)),
       body: FutureBuilder<List<ExternalEntry>>(
         future: _future,
         builder: (context, snapshot) {
@@ -240,7 +245,7 @@ class _ExternalFolderScreenState extends State<ExternalFolderScreen> {
                         fontWeight: FontWeight.w600)
                     : null,
               ),
-              trailing: isCurrent ? const Icon(Icons.equalizer) : null,
+              trailing: isCurrent ? const Icon(Icons.graphic_eq) : null,
               tileColor: isCurrent
                   ? theme.colorScheme.primaryContainer.withValues(alpha: 0.3)
                   : null,

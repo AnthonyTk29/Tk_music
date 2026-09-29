@@ -4,13 +4,18 @@ import 'package:audio_service/audio_service.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:media_kit/media_kit.dart';
 
 import 'package:tk_music/core/di/service_locator.dart';
 import 'package:tk_music/core/errors/app_error_code.dart';
 import 'package:tk_music/core/errors/app_exception.dart';
 import 'package:tk_music/core/errors/error_reporter.dart';
+import 'package:tk_music/core/platform.dart';
 import 'package:tk_music/core/theme/app_theme.dart';
 import 'package:tk_music/services/audio_handler.dart';
+import 'package:tk_music/services/desktop_audio_handler.dart';
+import 'package:tk_music/presentation/navigation/breadcrumbs.dart';
 import 'package:tk_music/presentation/providers/permission_provider.dart';
 import 'package:tk_music/presentation/providers/profile_provider.dart';
 import 'package:tk_music/presentation/providers/song_provider.dart';
@@ -19,6 +24,9 @@ import 'package:tk_music/presentation/pages/profile_picker_screen.dart';
 import 'package:tk_music/presentation/pages/request_permission_screen.dart';
 import 'package:tk_music/presentation/pages/splash_screen.dart';
 import 'package:tk_music/presentation/widgets/app_providers.dart';
+import 'package:tk_music/services/playback_settings.dart';
+import 'package:tk_music/services/tag_overrides_store.dart';
+import 'package:tk_music/services/track_features_store.dart';
 import 'package:tk_music/services/waveform_loader.dart';
 
 void main() {
@@ -31,11 +39,25 @@ void main() {
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
 
-    try {
-      await Firebase.initializeApp();
-      FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
-    } catch (e) {
-      debugPrint('Firebase init failed: $e');
+    // Crashlytics solo existe en Android (en desktop no hay plugin, y
+    // Firebase ni siquiera tiene la configuración de google-services.json).
+    if (!isDesktopPlatform) {
+      try {
+        await Firebase.initializeApp();
+        FlutterError.onError =
+            FirebaseCrashlytics.instance.recordFlutterFatalError;
+        ErrorReporter.instance.crashlyticsEnabled = true;
+      } catch (e) {
+        debugPrint('Firebase init failed: $e');
+      }
+    }
+    if (!ErrorReporter.instance.crashlyticsEnabled) {
+      // Sin Crashlytics los errores del framework igual quedan registrados
+      // (sin diálogo: un overflow de layout no amerita interrumpir a nadie).
+      FlutterError.onError = (details) {
+        FlutterError.presentError(details);
+        ErrorReporter.instance.log(details.exception, details.stack);
+      };
     }
 
     await _runMain();
@@ -49,34 +71,65 @@ void main() {
 }
 
 Future<void> _runMain() async {
+  // Antes que el reproductor: el volumen parejo/crossfade leen los ajustes,
+  // y la biblioteca aplica las correcciones del editor de tags al cargar.
+  await Future.wait([
+    PlaybackSettings.instance.load(),
+    TagOverridesStore.instance.load(),
+    TrackFeaturesStore.instance.warmUp(),
+  ]);
   AudioHandler? audioHandler;
-  try {
-    audioHandler = await AudioService.init(
-      builder: () => MyAudioHandler(),
-      config: const AudioServiceConfig(
-        androidNotificationChannelId: 'com.tkmusic.app.channel.audio',
-        androidNotificationChannelName: 'Audio playback',
-        androidNotificationOngoing: true,
-      ),
-    ).timeout(const Duration(seconds: 10));
-  } catch (e, stack) {
-    ErrorReporter.instance.report(
-      AppException(
-        AppErrorCode.playbackInitFailed,
-        userMessage:
-            'No se pudo iniciar el reproductor. Podés seguir usando la app, '
-            'pero la reproducción no va a funcionar hasta reabrirla.',
-        technicalMessage: 'AudioService.init: $e',
-      ),
-      stack,
-    );
+  if (isDesktopPlatform) {
+    // Acá no pasa por AudioService.init: ese es el que engancha la
+    // notificación/sesión de medios del sistema, y no tiene esa
+    // integración armada para Windows/Linux. MediaKit.ensureInitialized()
+    // es requisito de media_kit antes de crear cualquier Player.
+    try {
+      MediaKit.ensureInitialized();
+      audioHandler = DesktopAudioHandler();
+    } catch (e, stack) {
+      ErrorReporter.instance.report(
+        AppException(
+          AppErrorCode.playbackInitFailed,
+          userMessage:
+              'No se pudo iniciar el reproductor. Podés seguir usando la app, '
+              'pero la reproducción no va a funcionar hasta reabrirla.',
+          technicalMessage: 'DesktopAudioHandler: $e',
+        ),
+        stack,
+      );
+    }
+  } else {
+    try {
+      audioHandler = await AudioService.init(
+        builder: () => MyAudioHandler(),
+        config: const AudioServiceConfig(
+          androidNotificationChannelId: 'com.tkmusic.app.channel.audio',
+          androidNotificationChannelName: 'Reproducción de música',
+          androidNotificationOngoing: true,
+        ),
+      ).timeout(const Duration(seconds: 10));
+    } catch (e, stack) {
+      ErrorReporter.instance.report(
+        AppException(
+          AppErrorCode.playbackInitFailed,
+          userMessage:
+              'No se pudo iniciar el reproductor. Podés seguir usando la app, '
+              'pero la reproducción no va a funcionar hasta reabrirla.',
+          technicalMessage: 'AudioService.init: $e',
+        ),
+        stack,
+      );
+    }
   }
 
   initServiceLocator(audioHandler);
   // Arranca una sola vez acá, no desde ninguna pantalla: así la forma de
   // onda de lo que esté sonando sigue analizándose siempre, sin importar
-  // qué pantalla esté abierta ni si la app pasa a segundo plano.
-  if (audioHandler != null) {
+  // qué pantalla esté abierta ni si la app pasa a segundo plano. Donde hay
+  // análisis nativo de audio (Android: MainActivity.kt, Windows: Media
+  // Foundation).
+  if (audioHandler != null && hasNativeAudioAnalysis) {
     WaveformLoader.instance.start(audioHandler);
   }
 
@@ -112,9 +165,16 @@ class MyApp extends StatelessWidget {
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         navigatorKey: ErrorReporter.instance.navigatorKey,
+        // Migas de pan en el encabezado de cada pantalla.
+        navigatorObservers: [breadcrumbs],
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
         themeMode: ThemeMode.dark,
+        // Toda la app en español, también los textos que pone Flutter
+        // (menú de copiar/pegar, tooltips de "Atrás", selectores…).
+        locale: const Locale('es'),
+        supportedLocales: const [Locale('es')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
         home: const _AppShell(),
       ),
     );
@@ -179,7 +239,8 @@ class _AppShellState extends State<_AppShell> {
             children: [
               const Icon(Icons.error_outline, size: 48, color: Colors.red),
               const SizedBox(height: 12),
-              Text('Error al inicializar', style: Theme.of(context).textTheme.titleMedium),
+              Text('Error al inicializar',
+                  style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -187,7 +248,10 @@ class _AppShellState extends State<_AppShell> {
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: () => setState(() { _error = null; _check(); }),
+                onPressed: () => setState(() {
+                  _error = null;
+                  _check();
+                }),
                 icon: const Icon(Icons.refresh),
                 label: const Text('Reintentar'),
               ),
